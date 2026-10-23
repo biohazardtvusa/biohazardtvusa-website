@@ -30,6 +30,8 @@ export default async (request) => {
   const siteUrl = NETLIFY_SITE_URL || DEPLOY_PRIME_URL;
   if (!RESEND_API_KEY || !RESEND_FROM_EMAIL || !REVIEW_ADMIN_EMAIL || !siteUrl) return json(503, { error: 'Review email is not configured yet. Please contact us through WhatsApp for now.' });
 
+  const recipientAddress = REVIEW_ADMIN_EMAIL.trim();
+  const recipient = /@gmail\.com$/i.test(recipientAddress) ? recipientAddress.toLowerCase() : recipientAddress;
   const id = randomUUID();
   const token = randomBytes(32).toString('hex');
   const tokenHash = hash(token);
@@ -58,7 +60,7 @@ export default async (request) => {
     const mail = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + RESEND_API_KEY, 'content-type': 'application/json' },
-      body: JSON.stringify({ from: RESEND_FROM_EMAIL, to: [REVIEW_ADMIN_EMAIL], subject: 'Review awaiting your approval', text, html })
+      body: JSON.stringify({ from: RESEND_FROM_EMAIL.trim(), to: [recipient], subject: 'Review awaiting your approval', text, html })
     });
     if (!mail.ok) {
       let provider = {};
