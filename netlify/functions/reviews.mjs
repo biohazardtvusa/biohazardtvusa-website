@@ -70,16 +70,17 @@ export default async (request) => {
       else if (/invalid.*api.?key|api.?key.*invalid/i.test(message)) reason = 'invalid_api_key';
       else if (/from.*invalid|invalid.*from/i.test(message)) reason = 'invalid_sender';
       else if (/quota|rate limit|credits|daily limit/i.test(message)) reason = 'sending_limit';
+      const reference = 'R3_' + reason.toUpperCase() + '_T' + Number(RESEND_FROM_EMAIL.trim().toLowerCase() === 'onboarding@resend.dev') + '_I' + Number(REVIEW_ADMIN_EMAIL.trim().toLowerCase() === 'biohazardtvusa@gmail.com');
       console.error('review_submission_failed', JSON.stringify({ diagnosticVersion: 2, stage, httpStatus: mail.status, reason, testSenderConfigured: RESEND_FROM_EMAIL.trim().toLowerCase() === 'onboarding@resend.dev', expectedRecipientConfigured: REVIEW_ADMIN_EMAIL.trim().toLowerCase() === 'biohazardtvusa@gmail.com' }));
       await store.delete(reviewKey);
       await store.delete(actionKey);
-      return json(502, { error: 'We could not send the approval email. Please try again or contact us through WhatsApp.' });
+      return json(502, { error: 'We could not send the approval email. Reference: ' + reference + '. Please contact us through WhatsApp.' });
     }
     return json(201, { ok: true, message: 'Thanks—your review was sent for approval. It will appear on the site only if approved.' });
   } catch (error) {
     const kind = error instanceof TypeError ? 'TypeError' : 'Error';
     console.error('review_submission_failed', JSON.stringify({ stage, kind }));
     try { await store.delete(reviewKey); await store.delete(actionKey); } catch {}
-    return json(502, { error: 'We could not send the approval email. Please try again or contact us through WhatsApp.' });
+    return json(502, { error: 'We could not send the approval email. Reference: R3_' + stage.toUpperCase() + '. Please contact us through WhatsApp.' });
   }
 };
