@@ -26,8 +26,8 @@ export default async (request) => {
   const review = typeof input.review === 'string' ? input.review.trim().slice(0, 1500) : '';
   if (name.length < 1 || review.length < 5 || input.consent !== true) return json(400, { error: 'Add your name, a review, and consent to public display if approved.' });
 
-  const { RESEND_API_KEY, RESEND_FROM_EMAIL, REVIEW_ADMIN_EMAIL, URL, DEPLOY_PRIME_URL } = process.env;
-  const siteUrl = URL || DEPLOY_PRIME_URL;
+  const { RESEND_API_KEY, RESEND_FROM_EMAIL, REVIEW_ADMIN_EMAIL, URL: NETLIFY_SITE_URL, DEPLOY_PRIME_URL } = process.env;
+  const siteUrl = NETLIFY_SITE_URL || DEPLOY_PRIME_URL;
   if (!RESEND_API_KEY || !RESEND_FROM_EMAIL || !REVIEW_ADMIN_EMAIL || !siteUrl) return json(503, { error: 'Review email is not configured yet. Please contact us through WhatsApp for now.' });
 
   const id = randomUUID();
