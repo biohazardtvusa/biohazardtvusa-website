@@ -49,21 +49,36 @@ export default async (request) => {
   const text = 'New BiohazardTvUSA review awaiting approval.\n\nName: ' + name + '\nReview: ' + review + '\n\nApprove: ' + approveUrl.href + '\nReject: ' + rejectUrl.href + '\n\nLinks expire in 7 days and require a confirmation click.';
   const html = '<h2>New review awaiting approval</h2><p><strong>Name:</strong> ' + safeName + '</p><p><strong>Review:</strong><br>' + safeReview + '</p><p><a href="' + approveUrl.href + '">Review and approve</a></p><p><a href="' + rejectUrl.href + '">Review and reject</a></p><p>These links expire in 7 days. Opening a link does not approve or reject until you confirm.</p>';
 
+  let stage = 'save_review';
   try {
     await store.set(reviewKey, JSON.stringify({ id, name, review, status: 'pending', createdAt, actionTokenHash: tokenHash, actionExpiresAt: expiresAt }));
+    stage = 'save_action';
     await store.set(actionKey, id);
+    stage = 'send_email';
     const mail = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { authorization: 'Bearer ' + RESEND_API_KEY, 'content-type': 'application/json' },
       body: JSON.stringify({ from: RESEND_FROM_EMAIL, to: [REVIEW_ADMIN_EMAIL], subject: 'Review awaiting your approval', text, html })
     });
     if (!mail.ok) {
+      let provider = {};
+      try { provider = await mail.json(); } catch {}
+      const message = typeof provider.message === 'string' ? provider.message : '';
+      let reason = 'provider_rejected';
+      if (/domain.*not verified|verify.*domain/i.test(message)) reason = 'sender_domain_unverified';
+      else if (/testing emails|only send.*own|test.*own email/i.test(message)) reason = 'test_sender_recipient_restriction';
+      else if (/invalid.*api.?key|api.?key.*invalid/i.test(message)) reason = 'invalid_api_key';
+      else if (/from.*invalid|invalid.*from/i.test(message)) reason = 'invalid_sender';
+      else if (/quota|rate limit|credits|daily limit/i.test(message)) reason = 'sending_limit';
+      console.error('review_submission_failed', JSON.stringify({ stage, httpStatus: mail.status, reason }));
       await store.delete(reviewKey);
       await store.delete(actionKey);
       return json(502, { error: 'We could not send the approval email. Please try again or contact us through WhatsApp.' });
     }
     return json(201, { ok: true, message: 'Thanks—your review was sent for approval. It will appear on the site only if approved.' });
-  } catch {
+  } catch (error) {
+    const kind = error instanceof TypeError ? 'TypeError' : 'Error';
+    console.error('review_submission_failed', JSON.stringify({ stage, kind }));
     try { await store.delete(reviewKey); await store.delete(actionKey); } catch {}
     return json(502, { error: 'We could not send the approval email. Please try again or contact us through WhatsApp.' });
   }
