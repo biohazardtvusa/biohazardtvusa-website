@@ -65,12 +65,12 @@ export default async (request) => {
       try { provider = await mail.json(); } catch {}
       const message = typeof provider.message === 'string' ? provider.message : '';
       let reason = 'provider_rejected';
-      if (/domain.*not verified|verify.*domain/i.test(message)) reason = 'sender_domain_unverified';
-      else if (/testing emails|only send.*own|test.*own email/i.test(message)) reason = 'test_sender_recipient_restriction';
+      if (/testing emails|only send.*own|test.*own email/i.test(message)) reason = 'test_sender_recipient_restriction';
+      else if (/domain.*not verified/i.test(message)) reason = 'sender_domain_unverified';
       else if (/invalid.*api.?key|api.?key.*invalid/i.test(message)) reason = 'invalid_api_key';
       else if (/from.*invalid|invalid.*from/i.test(message)) reason = 'invalid_sender';
       else if (/quota|rate limit|credits|daily limit/i.test(message)) reason = 'sending_limit';
-      console.error('review_submission_failed', JSON.stringify({ stage, httpStatus: mail.status, reason }));
+      console.error('review_submission_failed', JSON.stringify({ diagnosticVersion: 2, stage, httpStatus: mail.status, reason, testSenderConfigured: RESEND_FROM_EMAIL.trim().toLowerCase() === 'onboarding@resend.dev', expectedRecipientConfigured: REVIEW_ADMIN_EMAIL.trim().toLowerCase() === 'biohazardtvusa@gmail.com' }));
       await store.delete(reviewKey);
       await store.delete(actionKey);
       return json(502, { error: 'We could not send the approval email. Please try again or contact us through WhatsApp.' });
