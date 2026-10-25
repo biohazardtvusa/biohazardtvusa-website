@@ -3,6 +3,12 @@
   if (!form) return;
   const status = document.getElementById('email-signup-status');
   const button = form.querySelector('button[type="submit"]');
+  // Re-align direct signup links after the existing large page images finish loading.
+  window.addEventListener('load', () => {
+    if (location.hash === '#email-updates' || location.hash === '#email-signup-form') {
+      requestAnimationFrame(() => document.getElementById('email-updates').scrollIntoView({ block: 'start' }));
+    }
+  }, { once: true });
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (button.disabled || !form.reportValidity()) return;
