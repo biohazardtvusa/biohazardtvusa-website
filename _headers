@@ -1,0 +1,3 @@
+/downloads/*
+  Content-Disposition: attachment
+  X-Content-Type-Options: nosniff
