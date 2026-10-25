@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Manage email signups | BIOHAZARDTVUSA</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0c10;--panel:#16171d;--gold:#e6bd62;--text:#f7f1e5;--muted:#b4b0a8;--line:#35302a}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 Arial,sans-serif}main{width:min(760px,100%);margin:auto;padding:36px 20px 64px}a{color:var(--gold);overflow-wrap:anywhere}h1{font-size:clamp(27px,6vw,38px);line-height:1.2}h2{font-size:22px}p{color:var(--muted)}.card{padding:24px;border:1px solid var(--line);border-radius:16px;background:var(--panel);margin:24px 0}.btn{display:inline-block;max-width:100%;padding:14px 20px;background:var(--gold);color:#151515;font:700 16px Arial,sans-serif;border:1px solid var(--gold);border-radius:10px;cursor:pointer;white-space:normal}.btn:disabled{opacity:.6;cursor:wait}.secondary{background:transparent;color:var(--gold);margin-top:16px}input{width:100%;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;margin:8px 0 16px}label{display:block;font-weight:700}[hidden]{display:none!important}.summary{color:var(--gold);font-size:20px;font-weight:700}#status{min-height:1.6em;overflow-wrap:anywhere}.small{font-size:14px}:focus-visible{outline:3px solid var(--gold);outline-offset:4px}
+</style>
+</head>
+<body>
+<main>
+<a href="/#email-updates">BIOHAZARDTVUSA &middot; BIOHAZARD MEDIA</a>
+<h1>Manage your email signup list.</h1>
+<p>Subscriber information is private. Only someone with a valid business-admin access link can download or update this list.</p>
+<section class="card" id="access-panel">
+<h2>Get a secure access link</h2>
+<p>The link is sent only to the business admin email already configured for this website. You cannot choose a different recipient here.</p>
+<button class="btn" id="request-access" type="button">Email my secure access link</button>
+<p class="small">Check the business inbox and spam folder. Each link expires in 7 days. Do not share it.</p>
+</section>
+<section class="card" id="manage-panel" hidden>
+<h2>Your opted-in email list</h2>
+<p class="summary" id="summary"></p>
+<p>Downloads include active signups only, with Texas entries first. Each record includes its signup consent and date. Email ownership has not been verified; no confirmation email is sent automatically.</p>
+<button class="btn" id="download" type="button">Download email list (CSV)</button>
+<p class="small">Open the downloaded file in Excel or Google Sheets. Protect it as customer information; don’t publish or share it publicly.</p>
+<form id="unsubscribe-form">
+<h2>Remove an address from marketing</h2>
+<p>Use this when someone asks to unsubscribe. They will be excluded from subsequent downloads; you must also suppress them in any lists already imported into an email service.</p>
+<label for="unsubscribe-email">Email address to unsubscribe</label>
+<input id="unsubscribe-email" name="email" type="email" maxlength="254" required autocomplete="off">
+<button class="btn secondary" type="submit">Unsubscribe this address</button>
+</form>
+<button class="btn secondary" id="sign-out" type="button">Close secure access</button>
+</section>
+<p id="status" role="status" aria-live="polite"></p>
+<p class="small">This page does not send marketing campaigns. A verified sender, a working unsubscribe mechanism, a valid business mailing address and campaign approval are still required before a campaign is sent.</p>
+</main>
+<script>
+(() => {
+  const endpoint = '/.netlify/functions/newsletter';
+  const status = document.getElementById('status');
+  const accessPanel = document.getElementById('access-panel');
+  const managePanel = document.getElementById('manage-panel');
+  let token = new URLSearchParams(location.hash.slice(1)).get('access') || '';
+  history.replaceState(null, '', location.pathname);
+  if (!/^[a-f0-9]{64}$/.test(token)) token = '';
+
+  async function api(action, options = {}) {
+    const response = await fetch(endpoint + '?action=' + action, {
+      ...options, headers: { accept: 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}), ...options.headers }
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        token = ''; accessPanel.hidden = false; managePanel.hidden = true;
+      }
+      throw new Error(body.error || 'We could not complete this request. Please try again.');
+    }
+    return response;
+  }
+  async function refresh() {
+    const body = await (await api('summary')).json();
+    document.getElementById('summary').textContent = body.active + ' active signups · ' + body.texas + ' Texas · ' + body.other + ' other / unspecified';
+    accessPanel.hidden = true;
+    managePanel.hidden = false;
+  }
+  document.getElementById('request-access').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true; status.textContent = 'Requesting your access email…';
+    try {
+      const body = await (await api('request-access', { method: 'POST' })).json();
+      status.textContent = body.message;
+    } catch (error) { status.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+  document.getElementById('download').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true; status.textContent = 'Preparing your private CSV…';
+    try {
+      const response = await api('export');
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = url; link.download = 'biohazardtvusa-email-list.csv';
+      document.body.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.textContent = 'CSV download started.';
+    } catch (error) { status.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+  document.getElementById('unsubscribe-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+    const button = form.querySelector('button');
+    button.disabled = true;
+    try {
+      const body = await (await api('unsubscribe', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: new FormData(form).get('email') })
+      })).json();
+      form.reset(); await refresh(); status.textContent = body.message;
+    } catch (error) { status.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+  document.getElementById('sign-out').addEventListener('click', () => {
+    token = ''; managePanel.hidden = true; accessPanel.hidden = false;
+    status.textContent = 'Secure access closed. Close this tab to finish.';
+  });
+  if (token) refresh().catch(error => { status.textContent = error.message; });
+})();
+</script>
+</body>
+</html>
