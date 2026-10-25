@@ -22,7 +22,7 @@
  .hero-layout{grid-template-columns:1fr;text-align:center;gap:24px}.hero-layout>div:last-child{grid-row:1}.hero-logo{max-width:520px;width:min(100%,520px);margin:auto;display:block}.hero h1{margin-left:auto;margin-right:auto}.hero p{margin-left:auto;margin-right:auto}.hero .actions{justify-content:center}@media(max-width:700px){.hero-logo{max-width:360px}} 
 .skip-link{position:fixed;top:12px;left:12px;z-index:1000;padding:12px 16px;background:var(--gold);color:#0b0c10;font-weight:800;text-decoration:none;border-radius:8px;transform:translateY(calc(-100% - 16px));transition:transform .15s ease}.skip-link:focus{transform:translateY(0)}:focus-visible{outline:3px solid var(--gold);outline-offset:3px}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto!important}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
 
-.approved-reviews{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));align-items:start;gap:16px;margin:24px 0;max-height:440px;max-height:min(440px,65vh);overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--gold) var(--panel);padding:4px 12px 4px 4px;overflow-wrap:anywhere}.approved-review{height:auto}.approved-review .review-copy{white-space:pre-wrap;margin:10px 0}.review-consent{display:flex;gap:10px;align-items:flex-start;margin:14px 0;color:var(--muted);font-size:.92rem}.review-consent input{margin-top:.3em;accent-color:var(--gold)}.review-honeypot{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
+.approved-reviews{display:flex;align-items:flex-start;gap:16px;margin:16px 0 24px;overflow-x:auto;scroll-snap-type:x proximity;scroll-padding-inline:4px;scrollbar-width:thin;scrollbar-color:var(--gold) var(--panel);padding:4px 4px 14px;overflow-wrap:anywhere}.approved-review{flex:0 0 min(86%,560px);min-width:0;scroll-snap-align:start}.approved-review .review-copy{white-space:pre-wrap;margin:10px 0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:6;max-height:9.6em;overflow:hidden}.approved-review.review-expanded .review-copy{display:block;max-height:none;-webkit-line-clamp:unset}.review-expand{display:block;margin-top:12px;padding:5px 0;background:none;border:0;color:var(--gold);font-weight:700;text-decoration:underline;cursor:pointer}.review-expand[hidden]{display:none}.review-navigation{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.review-navigation p{margin:0}.review-navigation-buttons{display:flex;gap:10px}.review-navigation .btn{min-width:44px;min-height:44px;padding:7px 14px}.review-navigation .btn:disabled{opacity:.4;cursor:default}.review-navigation[hidden]{display:none}.review-consent{display:flex;gap:10px;align-items:flex-start;margin:14px 0;color:var(--muted);font-size:.92rem}.review-consent input{margin-top:.3em;accent-color:var(--gold)}.review-honeypot{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
 
 /* Clear GOLD offer; existing calculator visual design retained. */
 .hero-layout{grid-template-columns:minmax(0,1.35fr) minmax(220px,.65fr);text-align:left;gap:36px}.hero-layout>div:last-child{grid-row:auto}.hero-logo{max-width:320px;width:100%}.hero h1{font-size:clamp(36px,5.4vw,64px);letter-spacing:-.045em;margin-left:0;margin-right:0}.hero p{margin-left:0;margin-right:0}.hero .actions{justify-content:flex-start}.hero .hero-price{font-size:22px;color:var(--cream);margin:12px 0 20px}.hero-price strong{font-size:clamp(44px,6vw,64px);line-height:1.1;color:var(--gold);letter-spacing:-.04em}.hero-price span{font-size:20px;margin-left:4px}.hero .hero-fine{font-size:13px;color:var(--muted);margin-top:16px;max-width:600px}.estimate-label{font-size:13px;color:var(--cream);font-weight:700;margin-bottom:5px}.start-guide{padding-top:28px;padding-bottom:0}.start-guide h2{font-size:clamp(24px,3vw,32px)}.start-guide .tile{padding:20px}.start-guide h3{font-size:18px}.start-guide p{font-size:15px;margin-bottom:0}
@@ -182,5 +182,80 @@
  }
  [connections,term].forEach(x=>x.addEventListener('change',update));
  update();
+})();
+</script>
+<script>
+/* Compact, manually controlled review carousel; submission and pricing are unchanged. */
+(() => {
+ const list=document.getElementById('approved-reviews');
+ if(!list)return;
+ const navigation=document.createElement('div');
+ navigation.className='review-navigation';
+ navigation.hidden=true;
+ const hint=document.createElement('p');
+ hint.className='small';
+ hint.textContent='Swipe left or right to browse reviews.';
+ const buttons=document.createElement('div');
+ buttons.className='review-navigation-buttons';
+ function makeArrow(label,text){
+  const button=document.createElement('button');
+  button.type='button';
+  button.className='btn alt';
+  button.textContent=text;
+  button.setAttribute('aria-label',label);
+  button.setAttribute('aria-controls','approved-reviews');
+  buttons.append(button);
+  return button;
+ }
+ const previous=makeArrow('Previous review','←');
+ const next=makeArrow('Next review','→');
+ navigation.append(hint,buttons);
+ list.before(navigation);
+ function updateControls(){
+  navigation.hidden=list.querySelectorAll('.approved-review').length<2;
+  previous.disabled=list.scrollLeft<=2;
+  next.disabled=list.scrollLeft>=list.scrollWidth-list.clientWidth-2;
+  list.querySelectorAll('.approved-review').forEach(card=>{
+   const quote=card.querySelector('.review-copy');
+   const button=card.querySelector('.review-expand');
+   if(button)button.hidden=!card.classList.contains('review-expanded')&&quote.scrollHeight<=quote.clientHeight+1;
+  });
+ }
+ function move(direction){
+  const card=list.querySelector('.approved-review');
+  if(card)list.scrollBy({left:direction*(card.getBoundingClientRect().width+16),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});
+ }
+ previous.addEventListener('click',()=>move(-1));
+ next.addEventListener('click',()=>move(1));
+ list.addEventListener('keydown',event=>{
+  if(event.target!==list||!['ArrowLeft','ArrowRight'].includes(event.key))return;
+  event.preventDefault();
+  move(event.key==='ArrowRight'?1:-1);
+ });
+ list.addEventListener('scroll',updateControls,{passive:true});
+ function enhance(){
+  list.querySelectorAll('.approved-review').forEach((card,index)=>{
+   if(card.querySelector('.review-expand'))return;
+   const quote=card.querySelector('.review-copy');
+   quote.id='approved-review-copy-'+index;
+   const button=document.createElement('button');
+   button.type='button';
+   button.className='review-expand';
+   button.textContent='Read full review';
+   button.setAttribute('aria-expanded','false');
+   button.setAttribute('aria-controls',quote.id);
+   button.addEventListener('click',()=>{
+    const expanded=card.classList.toggle('review-expanded');
+    button.setAttribute('aria-expanded',String(expanded));
+    button.textContent=expanded?'Show less':'Read full review';
+    updateControls();
+   });
+   card.append(button);
+  });
+  requestAnimationFrame(updateControls);
+ }
+ new MutationObserver(enhance).observe(list,{childList:true});
+ new ResizeObserver(updateControls).observe(list);
+ enhance();
 })();
 </script></body></html>
