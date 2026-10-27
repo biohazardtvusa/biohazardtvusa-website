@@ -92,7 +92,7 @@ export function createNewsletterHandler({ store, env = {}, sendMail, now = () =>
         if (prior?.day === day && prior.count >= 10) return json(429, { error: 'The daily access-email limit was reached. Try again tomorrow.' });
         const token = randomBytes(32).toString('hex');
         const tokenKey = 'access/' + hash(token);
-        const accessUrl = new WebURL('/email-list.html', env.URL || 'https://biohazardtvusa.netlify.app/');
+        const accessUrl = new WebURL('/email-list.html', env.URL || 'https://biohazardtvusa.com/');
         accessUrl.hash = 'access=' + token;
         await write(tokenKey, { expiresAt: now() + 7 * 86400000 });
         await write('access-email-limit', { day, count: prior?.day === day ? prior.count + 1 : 1, lastSent: now() });
