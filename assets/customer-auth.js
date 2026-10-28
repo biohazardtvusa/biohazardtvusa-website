@@ -4,13 +4,20 @@
   if (!status) return;
 
   const navLinks = document.querySelector('.nav .links');
-  if (navLinks && !navLinks.querySelector('a[data-client-portal-link]')) {
-    const clientLink = document.createElement('a');
-    clientLink.href = '#client-portal';
-    clientLink.textContent = 'Client Login';
-    clientLink.dataset.clientPortalLink = 'true';
-    const contactLink = navLinks.querySelector('a[href="#contact"]');
-    navLinks.insertBefore(clientLink, contactLink || null);
+  if (navLinks) {
+    navLinks.querySelector('a[href="#live"]')?.remove();
+    navLinks.querySelector('a[href="#ondemand"]')?.remove();
+    const plansLink = navLinks.querySelector('a[href="#gold"]');
+    if (plansLink) plansLink.textContent = 'Live TV Plans';
+    const devicesLink = navLinks.querySelector('a[href="#devices"]');
+    if (devicesLink) devicesLink.textContent = 'Devices & Setup';
+    if (!navLinks.querySelector('a[href="#faq"]')) {
+      const faqLink = document.createElement('a');
+      faqLink.href = '#faq';
+      faqLink.textContent = 'FAQ';
+      const reviewsLink = navLinks.querySelector('a[href="#reviews"]');
+      navLinks.insertBefore(faqLink, reviewsLink || null);
+    }
   }
   if (navLinks && !navLinks.querySelector('a[data-referral-link]')) {
     const referralLink = document.createElement('a');
