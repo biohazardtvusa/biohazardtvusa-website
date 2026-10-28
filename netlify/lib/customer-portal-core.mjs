@@ -50,6 +50,11 @@ async function parseBody(request, maxLength = 4096) {
   return JSON.parse(text);
 }
 
+const ACQUISITION_SOURCE_VALUES = new Set([
+  'google', 'bing', 'facebook', 'instagram', 'tiktok', 'youtube', 'whatsapp',
+  'email', 'client_referral', 'direct', 'other_website', 'other', 'unknown'
+]);
+
 export function createCustomerPortalHandler({ store, adminStore, env = {}, sendMail, now = () => Date.now() }) {
   const siteBase = env.PUBLIC_SITE_URL || 'https://biohazardtvusa.com/';
   const read = async key => store.get(key, { type: 'json' });
@@ -238,6 +243,15 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     const password = typeof input?.password === 'string' ? input.password : '';
     const passwordConfirm = typeof input?.passwordConfirm === 'string' ? input.passwordConfirm : '';
     const referralCode = typeof input?.referralCode === 'string' ? input.referralCode.trim().toUpperCase() : '';
+    const requestedSource = typeof input?.acquisitionSource === 'string'
+      ? input.acquisitionSource.trim().toLowerCase()
+      : 'unknown';
+    const acquisitionSource = referralCode
+      ? 'client_referral'
+      : (ACQUISITION_SOURCE_VALUES.has(requestedSource) ? requestedSource : 'unknown');
+    const acquisitionCampaign = typeof input?.acquisitionCampaign === 'string'
+      ? input.acquisitionCampaign.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 48)
+      : '';
     if (name.length < 2 || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name) || !validEmail(email)) {
       return json(400, { error: 'Enter a valid name and email address.' });
     }
@@ -283,6 +297,8 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       ...credentials,
       referralCode: referralCode || null,
       referrerId,
+      acquisitionSource,
+      acquisitionCampaign,
       status: 'email_verification_pending',
       createdAt: prior?.createdAt || new Date(now()).toISOString(),
       updatedAt: new Date(now()).toISOString(),
@@ -542,10 +558,11 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
   async function adminData(request) {
     if (request.method !== 'GET') return json(405, { error: 'Method not allowed.' });
     if (!await adminAuthorized(request)) return json(401, { error: 'Open your secure business admin link to continue.' });
-    const [customers, referrals, contests] = await Promise.all([
+    const [customers, referrals, contests, applications] = await Promise.all([
       listRecords('customers/'),
       listRecords('referrals/'),
-      listRecords('contests/')
+      listRecords('contests/'),
+      listRecords('applications/')
     ]);
     const activeCustomers = customers.filter(customer => customer.status === 'active');
     const counts = new Map();
@@ -567,6 +584,23 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       pendingMonths: months.get(customer.id)?.pending || 0,
       appliedMonths: months.get(customer.id)?.applied || 0
     })).sort((a, b) => b.referrals - a.referrals || a.name.localeCompare(b.name));
+    const acquisitionGroups = new Map();
+    for (const application of applications) {
+      const source = application.referralCode
+        ? 'client_referral'
+        : (ACQUISITION_SOURCE_VALUES.has(application.acquisitionSource) ? application.acquisitionSource : 'unknown');
+      const campaign = typeof application.acquisitionCampaign === 'string'
+        ? application.acquisitionCampaign.replace(/[^a-z0-9_-]/gi, '').slice(0, 48)
+        : '';
+      const key = source + '\u0000' + campaign;
+      const totals = acquisitionGroups.get(key) || { source, campaign, requests: 0, verified: 0, activated: 0 };
+      totals.requests++;
+      if (application.verifiedAt) totals.verified++;
+      if (application.status === 'approved') totals.activated++;
+      acquisitionGroups.set(key, totals);
+    }
+    const acquisitionFunnel = [...acquisitionGroups.values()]
+      .sort((a, b) => b.activated - a.activated || b.requests - a.requests || a.source.localeCompare(b.source));
     return json(200, {
       totals: {
         activeClients: activeCustomers.length,
@@ -574,6 +608,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
         pendingMonths: [...months.values()].reduce((sum, value) => sum + value.pending, 0),
         appliedMonths: [...months.values()].reduce((sum, value) => sum + value.applied, 0)
       },
+      acquisitionFunnel,
       leaderboard,
       contests: contests.sort((a, b) => b.startAt.localeCompare(a.startAt)).slice(0, 50)
     });

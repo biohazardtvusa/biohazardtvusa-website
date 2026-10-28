@@ -3,6 +3,10 @@ import { createHash } from 'node:crypto';
 const MAX_BODY_BYTES = 12_000;
 const MAX_SUBMISSIONS_PER_HOUR = 5;
 const FALLBACK_EMAIL = 'Biohazardtvusa@gmail.com';
+const ACQUISITION_SOURCES = new Set([
+  'google', 'bing', 'facebook', 'instagram', 'tiktok', 'youtube', 'whatsapp',
+  'email', 'client_referral', 'direct', 'other_website', 'other', 'unknown'
+]);
 
 const json = (status, body) => new Response(JSON.stringify(body), {
   status,
@@ -84,6 +88,12 @@ export function createContactHandler({ store, env = {}, sendMail, now = () => Da
     const message = typeof input?.message === 'string'
       ? input.message.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim()
       : '';
+    const sourceCandidate = singleLine(input?.acquisitionSource).toLowerCase();
+    const acquisitionSource = ACQUISITION_SOURCES.has(sourceCandidate) ? sourceCandidate : 'unknown';
+    const acquisitionCampaign = singleLine(input?.acquisitionCampaign)
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, '')
+      .slice(0, 48);
 
     if (!name || name.length > 70) return json(400, { error: 'Please enter a name of 70 characters or fewer.' });
     if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
@@ -118,6 +128,8 @@ export function createContactHandler({ store, env = {}, sendMail, now = () => Da
       'Name: ' + name,
       'Email: ' + email,
       'Phone: ' + (phone || 'Not provided'),
+      'Website source: ' + acquisitionSource,
+      'Campaign: ' + (acquisitionCampaign || 'Not provided'),
       '',
       'Message:',
       message
@@ -126,6 +138,8 @@ export function createContactHandler({ store, env = {}, sendMail, now = () => Da
       '<p><strong>Name:</strong> ' + safeName + '</p>' +
       '<p><strong>Email:</strong> ' + safeEmail + '</p>' +
       '<p><strong>Phone:</strong> ' + safePhone + '</p>' +
+      '<p><strong>Website source:</strong> ' + escapeHtml(acquisitionSource) + '</p>' +
+      '<p><strong>Campaign:</strong> ' + escapeHtml(acquisitionCampaign || 'Not provided') + '</p>' +
       '<p><strong>Message:</strong><br>' + safeMessage + '</p>';
 
     try {

@@ -53,14 +53,21 @@ async function call(handler, action, { method = 'POST', body, headers = {} } = {
   return { response, body: await response.json() };
 }
 
-async function approveRequest(handler, messages, email, { referralCode = '', newClient = false } = {}) {
+async function approveRequest(handler, messages, email, {
+  referralCode = '',
+  newClient = false,
+  acquisitionSource = 'unknown',
+  acquisitionCampaign = ''
+} = {}) {
   const requested = await call(handler, 'request-account', {
     body: {
       name: email.split('@')[0],
       email,
       password: TEST_PASSWORD,
       passwordConfirm: TEST_PASSWORD,
-      referralCode
+      referralCode,
+      acquisitionSource,
+      acquisitionCampaign
     }
   });
   assert.equal(requested.response.status, 202);
@@ -376,7 +383,10 @@ test('contest tracker counts only owner-approved referrals inside the contest pe
   });
   assert.equal(expired.response.status, 401);
 
-  await approveRequest(handler, messages, 'contest-referrer@example.com');
+  await approveRequest(handler, messages, 'contest-referrer@example.com', {
+    acquisitionSource: 'instagram',
+    acquisitionCampaign: 'october_launch'
+  });
   const signIn = await call(handler, 'password-login', {
     body: { email: 'contest-referrer@example.com', password: TEST_PASSWORD }
   });
@@ -418,4 +428,12 @@ test('contest tracker counts only owner-approved referrals inside the contest pe
   const adminData = await call(handler, 'admin-data', { method: 'GET', headers: adminHeaders });
   assert.equal(adminData.body.totals.approvedReferrals, 2);
   assert.equal(adminData.body.leaderboard.find(person => person.email === 'contest-referrer@example.com').referrals, 2);
+  assert.deepEqual(adminData.body.acquisitionFunnel.find(item => item.source === 'instagram'), {
+    source: 'instagram',
+    campaign: 'october_launch',
+    requests: 1,
+    verified: 1,
+    activated: 1
+  });
+  assert.equal(adminData.body.acquisitionFunnel.find(item => item.source === 'client_referral').requests, 2);
 });

@@ -72,6 +72,12 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
 <h2>Client referrals and contest tracker</h2>
 <p>Only referrals you verify count: create the new client’s Xstream account, confirm they are a new active client, and extend the referring client’s subscription by one month before approving. Contest periods count referrals approved between the start and end dates; both dates use this device’s local time and are included. Create the period before announcing the contest; prizes are managed separately.</p>
 <p class="summary" id="referral-admin-summary">Loading referral totals…</p>
+<h3>Website source to activated clients</h3>
+<p>These totals follow portal account requests by first identified source and campaign, then count accounts you approved after confirming the Xstream setup. WhatsApp conversations that never become portal requests are not included. Older requests without source details appear as unknown.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Source / campaign</th><th>Requests</th><th>Email verified</th><th>Activated</th></tr></thead>
+<tbody id="acquisition-funnel-body"><tr><td colspan="4">Loading source totals…</td></tr></tbody>
+</table></div>
 <form id="contest-form">
 <h3>Create a contest period</h3>
 <div class="referral-fields">
@@ -272,6 +278,29 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
       referralSummary.textContent = data.totals.activeClients + ' approved clients · ' +
         data.totals.approvedReferrals + ' confirmed referrals · ' + data.totals.appliedMonths +
         ' free months applied · ' + data.totals.pendingMonths + ' months pending application';
+      const acquisitionBody = document.getElementById('acquisition-funnel-body');
+      acquisitionBody.replaceChildren();
+      const acquisitionRows = data.acquisitionFunnel || [];
+      if (!acquisitionRows.length) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 4;
+        cell.textContent = 'No portal account requests have been recorded yet.';
+        row.append(cell);
+        acquisitionBody.append(row);
+      } else {
+        const sourceLabels = {
+          google: 'Google', bing: 'Bing', facebook: 'Facebook', instagram: 'Instagram',
+          tiktok: 'TikTok', youtube: 'YouTube', whatsapp: 'WhatsApp', email: 'Email',
+          client_referral: 'Client referral', direct: 'Direct / untagged',
+          other_website: 'Other website', other: 'Other campaign', unknown: 'Unknown'
+        };
+        for (const item of acquisitionRows) {
+          const source = sourceLabels[item.source] || 'Unknown';
+          const label = item.campaign ? source + ' · ' + item.campaign : source;
+          acquisitionBody.append(tableRow([label, item.requests, item.verified, item.activated]));
+        }
+      }
       const allTimeBody = document.getElementById('referral-alltime-body');
       allTimeBody.replaceChildren();
       if (!data.leaderboard.length) {

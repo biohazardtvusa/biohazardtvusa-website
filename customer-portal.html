@@ -327,7 +327,9 @@ h2{font-size:22px;margin:0 0 8px}
         email: document.getElementById('request-email').value,
         password,
         passwordConfirm,
-        referralCode: document.getElementById('request-referral').value
+        referralCode: document.getElementById('request-referral').value,
+        acquisitionSource: window.biohazardAttribution?.source || 'unknown',
+        acquisitionCampaign: window.biohazardAttribution?.campaign || ''
       }) });
       document.getElementById('request-password').value = '';
       document.getElementById('request-password-confirm').value = '';
@@ -368,5 +370,6 @@ h2{font-size:22px;margin:0 0 8px}
   }
 })();
 </script>
+<script src="/assets/acquisition-source.js"></script>
 </body>
 </html>
