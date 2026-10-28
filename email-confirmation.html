@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Confirm email updates | BIOHAZARDTVUSA</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.65 Arial,sans-serif}main{width:min(620px,100%);margin:auto;padding:40px 22px 64px}a{color:#e6bd62;overflow-wrap:anywhere}h1{font-size:clamp(28px,6vw,40px);line-height:1.25}.card{margin-top:26px;padding:24px;border:1px solid #35302a;border-radius:16px;background:#16171d}p{color:#b4b0a8}.btn{display:inline-block;padding:14px 20px;border:1px solid #e6bd62;border-radius:10px;background:#e6bd62;color:#151515;font:700 16px Arial,sans-serif;cursor:pointer}.btn:disabled{opacity:.6;cursor:wait}#status{min-height:1.6em;overflow-wrap:anywhere}:focus-visible{outline:3px solid #e6bd62;outline-offset:4px}
+</style>
+</head>
+<body>
+<main>
+<a href="/">BIOHAZARDTVUSA &middot; BIOHAZARD MEDIA</a>
+<section class="card">
+<h1>Confirm your email updates</h1>
+<p>Click below to confirm that you want BIOHAZARDTVUSA live TV updates, offers and referral news. No marketing emails are sent until you confirm.</p>
+<form id="confirm-form">
+<button class="btn" id="confirm-button" type="submit">Confirm email address</button>
+</form>
+<p id="status" role="status" aria-live="polite">The confirmation link expires 72 hours after signup.</p>
+<p><a href="/#email-updates">Return to the email signup</a></p>
+</section>
+</main>
+<script>
+(() => {
+  const token = new URLSearchParams(location.hash.slice(1)).get('token') || '';
+  history.replaceState(null, '', location.pathname);
+  const form = document.getElementById('confirm-form');
+  const button = document.getElementById('confirm-button');
+  const status = document.getElementById('status');
+  if (!/^[a-f0-9]{64}$/.test(token)) {
+    button.disabled = true;
+    status.textContent = 'This confirmation link is missing or invalid. Return to the signup form to request a new one.';
+    return;
+  }
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (button.disabled) return;
+    button.disabled = true;
+    status.textContent = 'Confirming your email address…';
+    try {
+      const response = await fetch('/.netlify/functions/newsletter?action=confirm', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify({ token })
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || 'We could not confirm this address. Please try again.');
+      button.hidden = true;
+      status.textContent = body.message;
+    } catch (error) {
+      status.textContent = error.message || 'We could not confirm this address. Please try again.';
+      button.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

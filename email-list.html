@@ -22,10 +22,10 @@
 <p class="small">Check the business inbox and spam folder. Each link expires in 7 days. Do not share it.</p>
 </section>
 <section class="card" id="manage-panel" hidden>
-<h2>Your opted-in email list</h2>
+<h2>Confirmed subscribers</h2>
 <p class="summary" id="summary"></p>
-<p>Downloads include active signups only, with Texas entries first. Each record includes its signup consent and date. Email ownership has not been verified; no confirmation email is sent automatically.</p>
-<button class="btn" id="download" type="button">Download email list (CSV)</button>
+<p>Downloads include confirmed, active signups only, with Texas entries first. Earlier signups without verified email ownership are excluded until the person signs up again and confirms. Each CSV row includes a personal unsubscribe page link and a one-click unsubscribe URL. Add the personal link to every marketing email. If your email service supports one-click unsubscribe headers, use the CSV value for <code>List-Unsubscribe</code> and set <code>List-Unsubscribe-Post</code> to <code>List-Unsubscribe=One-Click</code>.</p>
+<button class="btn" id="download" type="button">Download confirmed list (CSV)</button>
 <p class="small">Open the downloaded file in Excel or Google Sheets. Protect it as customer information; don’t publish or share it publicly.</p>
 <form id="unsubscribe-form">
 <h2>Remove an address from marketing</h2>
@@ -64,7 +64,7 @@
   }
   async function refresh() {
     const body = await (await api('summary')).json();
-    document.getElementById('summary').textContent = body.active + ' active signups · ' + body.texas + ' Texas · ' + body.other + ' other / unspecified';
+    document.getElementById('summary').textContent = body.active + ' confirmed subscribers · ' + body.texas + ' Texas · ' + body.other + ' other / unspecified';
     accessPanel.hidden = true;
     managePanel.hidden = false;
   }
