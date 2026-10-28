@@ -12,6 +12,15 @@
     const contactLink = navLinks.querySelector('a[href="#contact"]');
     navLinks.insertBefore(clientLink, contactLink || null);
   }
+  if (navLinks && !navLinks.querySelector('a[data-referral-link]')) {
+    const referralLink = document.createElement('a');
+    referralLink.href = '#client-portal';
+    referralLink.textContent = 'Refer a Friend';
+    referralLink.dataset.referralLink = 'true';
+    const contactLink = navLinks.querySelector('a[href="#contact"]');
+    if (contactLink) contactLink.after(referralLink);
+    else navLinks.append(referralLink);
+  }
 
   const setStatus = (message, state = '') => {
     status.textContent = message;
