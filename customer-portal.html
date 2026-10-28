@@ -38,6 +38,14 @@ h2{font-size:22px;margin:0 0 8px}
 .contest-list{display:grid;gap:10px;margin-top:14px}
 .contest-item{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px;background:var(--panel2);border:1px solid #363548;border-radius:12px}
 .contest-item strong{font-size:22px;color:var(--cyan);white-space:nowrap}
+.referral-activity{display:grid;gap:10px;margin:14px 0 0;padding:0;list-style:none}
+.referral-activity li{padding:14px 16px;background:var(--panel2);border:1px solid #363548;border-radius:12px}
+.referral-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.referral-row strong{font-size:17px}
+.referral-state{display:inline-block;max-width:65%;padding:5px 10px;border:1px solid #56504a;border-radius:999px;color:var(--muted);font-size:13px;line-height:1.4;text-align:right}
+.referral-state[data-status="applied"]{color:var(--green);border-color:#376a50;background:#17251d}
+.referral-state[data-status="rejected"]{color:#f0b1a7;border-color:#72433d;background:#291b1a}
+.referral-row-date{margin:4px 0 0;color:var(--muted);font-size:13px}
 .steps{list-style:none;counter-reset:steps;padding:0;margin:16px 0 0;display:grid;gap:14px}
 .steps li{counter-increment:steps;display:flex;align-items:flex-start;gap:12px;color:var(--text)}
 .steps li::before{content:counter(steps);display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:50%;background:#2b2944;color:var(--gold);font-weight:800}
@@ -87,6 +95,7 @@ h2{font-size:22px;margin:0 0 8px}
       <div class="field"><label for="request-password-confirm">Confirm password</label><input id="request-password-confirm" name="passwordConfirm" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></div>
       <div class="field"><label for="request-referral">Referral code (optional)</label><input id="request-referral" name="referralCode" type="text" maxlength="15" placeholder="BHTV-1234567890" autocapitalize="characters" autocomplete="off"></div>
       <p class="small">Use at least 12 characters. Submitting a referral code alerts the business by email. Verify your address once; after review, sign in here with your password.</p>
+      <p class="small">If you use a referral code, your first name and current referral status will be visible to the client who referred you.</p>
       <div class="form-actions"><button class="btn secondary" type="submit">Create account and request access</button></div>
     </form>
   </section>
@@ -103,11 +112,17 @@ h2{font-size:22px;margin:0 0 8px}
       <h2>Your referral activity</h2>
     <div class="metrics">
       <div class="metric"><span>Successful referrals</span><strong id="approved-referrals">0</strong></div>
-      <div class="metric"><span>Awaiting review</span><strong id="pending-referrals">0</strong></div>
+      <div class="metric"><span>Referrals in progress</span><strong id="pending-referrals">0</strong></div>
       <div class="metric"><span>Free months applied</span><strong id="applied-months">0</strong></div>
       <div class="metric"><span>Months pending application</span><strong id="pending-months">0</strong></div>
     </div>
     </div>
+    <section class="anchor-card" id="referral-status-overview" aria-labelledby="referral-status-heading">
+      <h2 id="referral-status-heading">Your referral statuses</h2>
+      <p class="muted">Follow each referral from email verification through business review and manual Xstream setup. A referral is complete only after we confirm the new client and apply your free month.</p>
+      <p class="small" id="no-referrals">No referrals have used your code yet.</p>
+      <ul class="referral-activity" id="referral-activity" aria-live="polite"></ul>
+    </section>
     <section class="anchor-card" id="refer-overview">
     <h2>Your referral code</h2>
     <p class="muted">Invite a new client with your personal link. Referrals count after the business confirms the signup.</p>
@@ -180,6 +195,39 @@ h2{font-size:22px;margin:0 0 8px}
       document.getElementById('referral-code').textContent = profile.referralCode;
       document.getElementById('referral-link-text').textContent = profile.referralLink;
       document.getElementById('share-referral').href = 'https://wa.me/?text=' + encodeURIComponent('Join BIOHAZARDTVUSA using my referral link: ' + profile.referralLink);
+      const activityList = document.getElementById('referral-activity');
+      activityList.replaceChildren();
+      const activities = Array.isArray(profile.referralActivity) ? profile.referralActivity : [];
+      document.getElementById('no-referrals').hidden = activities.length > 0;
+      const statusLabels = {
+        email_verification_pending: 'Waiting for email verification',
+        email_delivery_failed: 'Confirmation email issue — friend should try again',
+        verified_pending_admin: 'Email verified — awaiting business review and Xstream setup',
+        rejected: 'Not approved — contact us if you have questions',
+        approved: 'Account approved — referral confirmation pending',
+        earned: 'Confirmed — free month pending application',
+        applied: 'Complete — one free month applied'
+      };
+      for (const activity of activities) {
+        const item = document.createElement('li');
+        const row = document.createElement('div');
+        row.className = 'referral-row';
+        const name = document.createElement('strong');
+        name.textContent = (activity.firstName || 'Referred client') + ' referral';
+        const state = document.createElement('span');
+        state.className = 'referral-state';
+        state.dataset.status = activity.status || 'pending';
+        state.textContent = statusLabels[activity.status] || 'Referral status unavailable';
+        row.append(name, state);
+        const date = document.createElement('p');
+        date.className = 'referral-row-date';
+        const submittedAt = new Date(activity.submittedAt || '');
+        date.textContent = Number.isNaN(submittedAt.getTime())
+          ? 'Referral submitted'
+          : 'Submitted ' + new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(submittedAt);
+        item.append(row, date);
+        activityList.append(item);
+      }
       const contestList = document.getElementById('active-contests');
       contestList.replaceChildren();
       const contests = Array.isArray(profile.activeContests) ? profile.activeContests : [];

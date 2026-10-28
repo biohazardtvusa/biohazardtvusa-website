@@ -159,8 +159,15 @@ test('a referral alerts the owner and is recorded only after Xstream setup and e
   assert.deepEqual(referralAlert.to, ['owner@example.com']);
   assert.match(referralAlert.text, /has not yet verified their email/);
   assert.match(referralAlert.text, /referrer@example.com/);
+  const profileWhileUnverified = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
+  assert.equal(profileWhileUnverified.body.pendingReferrals, 1);
+  assert.equal(profileWhileUnverified.body.referralActivity[0].firstName, 'New');
+  assert.equal(profileWhileUnverified.body.referralActivity[0].status, 'email_verification_pending');
+  assert.equal('email' in profileWhileUnverified.body.referralActivity[0], false);
   const confirmToken = messages.at(-1).text.match(/#confirm=([a-f0-9]{64})/)?.[1];
   await call(handler, 'verify-account', { body: { token: confirmToken } });
+  const profileAwaitingReview = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
+  assert.equal(profileAwaitingReview.body.referralActivity[0].status, 'verified_pending_admin');
   const reviewToken = messages.at(-1).text.match(/#review=([a-f0-9]{64})/)?.[1];
   const reviewInfo = await call(handler, 'review-info', { body: { token: reviewToken } });
   assert.equal(reviewInfo.body.referrerEmail, 'referrer@example.com');
@@ -187,6 +194,7 @@ test('a referral alerts the owner and is recorded only after Xstream setup and e
   assert.equal(profileAfter.body.appliedMonths, 1);
   assert.equal(profileAfter.body.pendingMonths, 0);
   assert.equal(profileAfter.body.pendingReferrals, 0);
+  assert.equal(profileAfter.body.referralActivity[0].status, 'applied');
 });
 
 test('invalid and self-referral codes cannot create an account request', async () => {

@@ -482,8 +482,33 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     const applications = await listRecords('applications/');
     const allReferrals = await listRecords('referrals/');
     const contests = await listRecords('contests/');
-    const pendingReferrals = applications.filter(item => item.referrerId === customer.id &&
-      ['email_verification_pending', 'verified_pending_admin'].includes(item.status)).length;
+    const referralsByCustomer = new Map(referrals
+      .filter(item => item.referredCustomerId)
+      .map(item => [item.referredCustomerId, item]));
+    const referredApplications = applications.filter(item => item.referrerId === customer.id && item.email);
+    const matchedReferralCustomers = new Set();
+    const referralActivity = referredApplications.map(application => {
+      const referredCustomerId = hash(application.email);
+      const referral = referralsByCustomer.get(referredCustomerId);
+      if (referral) matchedReferralCustomers.add(referredCustomerId);
+      return {
+        firstName: typeof application.name === 'string' ? application.name.trim().split(/\s+/)[0] || 'Referred client' : 'Referred client',
+        submittedAt: application.createdAt || application.updatedAt || '',
+        status: referral?.status || application.status
+      };
+    });
+    for (const referral of referrals) {
+      if (!referral.referredCustomerId || matchedReferralCustomers.has(referral.referredCustomerId)) continue;
+      referralActivity.push({
+        firstName: 'Referred client',
+        submittedAt: referral.earnedAt || referral.appliedAt || '',
+        status: referral.status
+      });
+    }
+    referralActivity.sort((a, b) => Date.parse(b.submittedAt || 0) - Date.parse(a.submittedAt || 0));
+    const pendingReferrals = referralActivity.filter(item =>
+      ['email_verification_pending', 'email_delivery_failed', 'verified_pending_admin'].includes(item.status)
+    ).length;
     const pendingMonths = referrals.filter(item => item.status === 'earned').reduce((sum, item) => sum + (item.rewardMonths || 1), 0);
     const appliedMonths = referrals.filter(item => item.status === 'applied').reduce((sum, item) => sum + (item.rewardMonths || 1), 0);
     const link = new WebURL('/?ref=' + encodeURIComponent(customer.referralCode) + '#client-portal', siteBase).href;
@@ -507,6 +532,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       referralLink: link,
       pendingReferrals,
       approvedReferrals: referrals.filter(item => ['earned', 'applied'].includes(item.status)).length,
+      referralActivity,
       pendingMonths,
       appliedMonths,
       activeContests
