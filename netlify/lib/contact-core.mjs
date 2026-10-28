@@ -137,9 +137,20 @@ export function createContactHandler({ store, env = {}, sendMail, now = () => Da
         text,
         html
       });
-    } catch {
+    } catch (error) {
+      const reason = typeof error?.contactReason === 'string' ? error.contactReason : 'provider_rejected';
+      const guidance = {
+        test_sender_recipient_restriction: 'The mail service is restricted to test recipients.',
+        sender_domain_unverified: 'The sending domain is not verified with the mail service.',
+        invalid_api_key: 'The website mail-service connection needs attention.',
+        invalid_sender: 'The configured sender address is not accepted by the mail service.',
+        sending_limit: 'The mail service has reached a sending limit.',
+        network_error: 'The website could not reach the mail service.',
+        provider_rejected: 'The mail service rejected the message.'
+      }[reason] || 'The mail service rejected the message.';
       return json(502, {
-        error: 'We could not send your message. Please email ' + FALLBACK_EMAIL + ' or use WhatsApp.'
+        error: guidance + ' Please email ' + FALLBACK_EMAIL + ' or use WhatsApp.',
+        reference: 'CF1_' + reason.toUpperCase()
       });
     }
 

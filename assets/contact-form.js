@@ -17,7 +17,10 @@ if (contactForm && contactStatus) {
         body: JSON.stringify(values)
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'We could not send your message.');
+      if (!response.ok) {
+        const reference = result.reference ? ' (Reference: ' + result.reference + ')' : '';
+        throw new Error((result.error || 'We could not send your message.') + reference);
+      }
       contactStatus.textContent = result.message || 'Thanks—your message was sent.';
       contactForm.reset();
     } catch (error) {
