@@ -59,10 +59,21 @@ h2{font-size:22px;margin:0 0 8px}
 
   <section class="card" id="login-card">
     <h2>Sign in to your client account</h2>
-    <p class="muted">Enter the email address approved for your BIOHAZARDTVUSA customer account.</p>
+    <p class="muted">Use the email address approved for your BIOHAZARDTVUSA client account and your password.</p>
     <form id="login-form" class="form-grid">
       <div class="field"><label for="login-email">Email address</label><input id="login-email" name="email" type="email" maxlength="254" required autocomplete="email"></div>
-      <div class="form-actions"><button class="btn" type="submit">Email me a sign-in link</button></div>
+      <div class="field"><label for="login-password">Password</label><input id="login-password" name="password" type="password" minlength="12" maxlength="128" required autocomplete="current-password"></div>
+      <div class="form-actions"><button class="btn" type="submit">Sign in</button></div>
+    </form>
+    <form id="password-help-form" class="form-grid" style="margin-top:20px">
+      <div class="field"><label for="password-help-email">Forgot or need to set a password?</label><input id="password-help-email" name="email" type="email" maxlength="254" required autocomplete="email" placeholder="Enter your approved email"></div>
+      <div class="form-actions"><button class="btn secondary" type="submit">Email a secure password link</button></div>
+    </form>
+    <form id="password-reset-form" class="form-grid" hidden style="margin-top:20px">
+      <input id="password-reset-token" type="hidden">
+      <div class="field"><label for="password-reset-password">New password</label><input id="password-reset-password" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></div>
+      <div class="field"><label for="password-reset-confirm">Confirm new password</label><input id="password-reset-confirm" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></div>
+      <div class="form-actions"><button class="btn" type="submit">Save password and sign in</button></div>
     </form>
   </section>
 
@@ -72,9 +83,11 @@ h2{font-size:22px;margin:0 0 8px}
     <form id="request-form" class="form-grid">
       <div class="field"><label for="request-name">Your name</label><input id="request-name" name="name" type="text" minlength="2" maxlength="80" required autocomplete="name"></div>
       <div class="field"><label for="request-email">Email address</label><input id="request-email" name="email" type="email" maxlength="254" required autocomplete="email"></div>
+      <div class="field"><label for="request-password">Create password</label><input id="request-password" name="password" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></div>
+      <div class="field"><label for="request-password-confirm">Confirm password</label><input id="request-password-confirm" name="passwordConfirm" type="password" minlength="12" maxlength="128" required autocomplete="new-password"></div>
       <div class="field"><label for="request-referral">Referral code (optional)</label><input id="request-referral" name="referralCode" type="text" maxlength="15" placeholder="BHTV-1234567890" autocapitalize="characters" autocomplete="off"></div>
-      <p class="small">Submitting a referral code alerts the business by email. After you verify your address, the business confirms the signup, creates your Xstream account, and extends the referring client’s subscription by one month.</p>
-      <div class="form-actions"><button class="btn secondary" type="submit">Verify email and request access</button></div>
+      <p class="small">Use at least 12 characters. Submitting a referral code alerts the business by email. Verify your address once; after review, sign in here with your password.</p>
+      <div class="form-actions"><button class="btn secondary" type="submit">Create account and request access</button></div>
     </form>
   </section>
 
@@ -124,7 +137,7 @@ h2{font-size:22px;margin:0 0 8px}
     <div class="form-actions" style="margin-top:18px"><button class="btn secondary" id="sign-out" type="button">Sign out</button></div>
   </section>
   <p class="status" id="status" role="status" aria-live="polite"></p>
-  <p class="foot">We use your name, email, customer status, and referral history to operate this portal. Login links expire after 20 minutes and sessions expire after 7 days. <a href="/customer-privacy.html">Customer portal privacy notice</a>.</p>
+  <p class="foot">We use your name, email, customer status, and referral history to operate this portal. New accounts verify email once; password reset links expire after 30 minutes and sessions expire after 7 days. <a href="/customer-privacy.html">Customer portal privacy notice</a>.</p>
 </main>
 <script>
 (() => {
@@ -144,7 +157,17 @@ h2{font-size:22px;margin:0 0 8px}
     return body;
   };
   const showAccount = () => { accountCard.hidden = false; loginCard.hidden = true; requestCard.hidden = true; };
-  const showPublic = () => { accountCard.hidden = true; loginCard.hidden = false; requestCard.hidden = false; };
+  const showPublic = () => {
+    accountCard.hidden = true;
+    loginCard.hidden = false;
+    requestCard.hidden = false;
+    document.getElementById('password-reset-form').hidden = true;
+    document.getElementById('login-password').value = '';
+    document.getElementById('request-password').value = '';
+    document.getElementById('request-password-confirm').value = '';
+    document.getElementById('password-reset-password').value = '';
+    document.getElementById('password-reset-confirm').value = '';
+  };
   const loadProfile = async () => {
     try {
       const profile = await api('profile');
@@ -196,10 +219,45 @@ h2{font-size:22px;margin:0 0 8px}
     event.preventDefault();
     const button = event.currentTarget.querySelector('button[type="submit"]');
     button.disabled = true;
-    setStatus('Requesting your secure sign-in link…');
+    setStatus('Signing you in…');
     try {
-      const result = await api('request-login', { method: 'POST', body: JSON.stringify({ email: document.getElementById('login-email').value }) });
+      await api('password-login', { method: 'POST', body: JSON.stringify({
+        email: document.getElementById('login-email').value,
+        password: document.getElementById('login-password').value
+      }) });
+      document.getElementById('login-password').value = '';
+      await loadProfile();
+    } catch (error) { setStatus(error.message); }
+    finally { button.disabled = false; }
+  });
+  document.getElementById('password-help-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    setStatus('Requesting a secure password link…');
+    try {
+      const result = await api('password-reset-request', { method: 'POST', body: JSON.stringify({ email: document.getElementById('password-help-email').value }) });
       setStatus(result.message);
+    } catch (error) { setStatus(error.message); }
+    finally { button.disabled = false; }
+  });
+  document.getElementById('password-reset-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const password = document.getElementById('password-reset-password').value;
+    const passwordConfirm = document.getElementById('password-reset-confirm').value;
+    if (password !== passwordConfirm) { setStatus('The passwords do not match.'); return; }
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    setStatus('Saving your password…');
+    try {
+      await api('password-reset', { method: 'POST', body: JSON.stringify({
+        token: document.getElementById('password-reset-token').value,
+        password,
+        passwordConfirm
+      }) });
+      document.getElementById('password-reset-password').value = '';
+      document.getElementById('password-reset-confirm').value = '';
+      await loadProfile();
     } catch (error) { setStatus(error.message); }
     finally { button.disabled = false; }
   });
@@ -208,12 +266,23 @@ h2{font-size:22px;margin:0 0 8px}
     const button = event.currentTarget.querySelector('button[type="submit"]');
     button.disabled = true;
     setStatus('Submitting your access request…');
+    const password = document.getElementById('request-password').value;
+    const passwordConfirm = document.getElementById('request-password-confirm').value;
+    if (password !== passwordConfirm) {
+      setStatus('The passwords do not match.');
+      button.disabled = false;
+      return;
+    }
     try {
       const result = await api('request-account', { method: 'POST', body: JSON.stringify({
         name: document.getElementById('request-name').value,
         email: document.getElementById('request-email').value,
+        password,
+        passwordConfirm,
         referralCode: document.getElementById('request-referral').value
       }) });
+      document.getElementById('request-password').value = '';
+      document.getElementById('request-password-confirm').value = '';
       setStatus(result.message);
     } catch (error) { setStatus(error.message); }
     finally { button.disabled = false; }
@@ -229,6 +298,7 @@ h2{font-size:22px;margin:0 0 8px}
   const hashParams = new URLSearchParams(location.hash.slice(1));
   const confirmationToken = hashParams.get('confirm') || '';
   const loginToken = hashParams.get('login') || '';
+  const passwordResetToken = hashParams.get('password-reset') || '';
   history.replaceState(null, '', location.pathname + location.search);
   if (confirmationToken) {
     setStatus('Verifying your email…');
@@ -240,6 +310,11 @@ h2{font-size:22px;margin:0 0 8px}
     api('consume-login', { method: 'POST', body: JSON.stringify({ token: loginToken }) })
       .then(loadProfile)
       .catch(error => setStatus(error.message));
+  } else if (passwordResetToken) {
+    document.getElementById('password-reset-token').value = passwordResetToken;
+    document.getElementById('password-reset-form').hidden = false;
+    setStatus('Choose a new password for your client account.');
+    document.getElementById('password-reset-password').focus({ preventScroll: true });
   } else {
     loadProfile();
   }

@@ -1,10 +1,15 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { URL as WebURL } from 'node:url';
+import { promisify } from 'node:util';
 
 const LOGIN_TTL_MS = 20 * 60 * 1000;
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const PASSWORD_RESET_TTL_MS = 30 * 60 * 1000;
 const REVIEW_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PASSWORD_HASH_BYTES = 64;
+const PASSWORD_SCRYPT_OPTIONS = { N: 16384, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
+const scrypt = promisify(scryptCallback);
 const COOKIE = 'biohazard_customer_session';
 const ACCOUNT_REQUEST_MESSAGE = 'If this address already has portal access, use the sign-in form. Otherwise, check email for verification and await business review.';
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -12,7 +17,21 @@ const validToken = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(v
 const normalizeEmail = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
 const validEmail = value => value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 const validCode = value => typeof value === 'string' && /^BHTV-[A-F0-9]{10}$/.test(value);
+const validPassword = value => typeof value === 'string' && value.length >= 12 && value.length <= 128 && !/[\u0000-\u001f\u007f]/.test(value);
 const escapeHtml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+async function passwordCredentials(password) {
+  const passwordSalt = randomBytes(16).toString('hex');
+  const derived = await scrypt(password, passwordSalt, PASSWORD_HASH_BYTES, PASSWORD_SCRYPT_OPTIONS);
+  return { passwordSalt, passwordHash: Buffer.from(derived).toString('hex') };
+}
+async function passwordMatches(password, credentials) {
+  const salt = typeof credentials?.passwordSalt === 'string' ? credentials.passwordSalt : 'biohazardtvusa-password-timing-salt';
+  const expected = /^[a-f0-9]{128}$/.test(credentials?.passwordHash || '')
+    ? Buffer.from(credentials.passwordHash, 'hex')
+    : Buffer.alloc(PASSWORD_HASH_BYTES);
+  const derived = Buffer.from(await scrypt(password, salt, PASSWORD_HASH_BYTES, PASSWORD_SCRYPT_OPTIONS));
+  return timingSafeEqual(expected, derived) && Boolean(credentials?.passwordHash);
+}
 const json = (status, body, headers = {}) => new Response(JSON.stringify(body), {
   status,
   headers: {
@@ -94,6 +113,30 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     }
     const customer = await read('customers/' + session.customerId);
     return customer?.status === 'active' ? customer : null;
+  }
+
+  async function startSession(customer) {
+    const sessionToken = randomBytes(32).toString('hex');
+    await write('sessions/' + hash(sessionToken), { customerId: customer.id, expiresAt: now() + SESSION_TTL_MS });
+    return json(200, { ok: true }, { 'set-cookie': sessionCookie(sessionToken) });
+  }
+
+  async function revokeCustomerSessions(customerId) {
+    for await (const page of store.list({ prefix: 'sessions/', paginate: true })) {
+      for (const blob of page.blobs) {
+        const session = await read(blob.key);
+        if (session?.customerId === customerId) await store.delete(blob.key);
+      }
+    }
+  }
+
+  async function revokeCustomerPasswordResets(customerId) {
+    for await (const page of store.list({ prefix: 'password-resets/', paginate: true })) {
+      for (const blob of page.blobs) {
+        const reset = await read(blob.key);
+        if (reset?.customerId === customerId) await store.delete(blob.key);
+      }
+    }
   }
 
   function mailUrl(page, token, action = 'token') {
@@ -192,9 +235,14 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     try { input = await parseBody(request); } catch { return json(400, { error: 'Enter your name and email address.' }); }
     const name = typeof input?.name === 'string' ? input.name.trim() : '';
     const email = normalizeEmail(input?.email);
+    const password = typeof input?.password === 'string' ? input.password : '';
+    const passwordConfirm = typeof input?.passwordConfirm === 'string' ? input.passwordConfirm : '';
     const referralCode = typeof input?.referralCode === 'string' ? input.referralCode.trim().toUpperCase() : '';
     if (name.length < 2 || name.length > 80 || /[\u0000-\u001f\u007f]/.test(name) || !validEmail(email)) {
       return json(400, { error: 'Enter a valid name and email address.' });
+    }
+    if (!validPassword(password) || password !== passwordConfirm) {
+      return json(400, { error: 'Choose a password of at least 12 characters and enter it the same way twice.' });
     }
     if (referralCode && !validCode(referralCode)) return json(400, { error: 'That referral code is not valid. Check it with the client who shared it.' });
     if (await rateLimited(request, 'account-request-email', email, 3)) return json(429, { error: 'Please wait before submitting another request for this address.' });
@@ -224,6 +272,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       if (referrer.email === email) return json(400, { error: 'You cannot use your own referral code.' });
       referrerId = referrer.id;
     }
+    const credentials = await passwordCredentials(password);
     const token = randomBytes(32).toString('hex');
     const sameReferral = ['email_verification_pending', 'email_delivery_failed'].includes(prior?.status) &&
       prior?.referralCode === (referralCode || null) && prior?.referrerId === referrerId;
@@ -231,6 +280,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       id: prior?.id || randomBytes(16).toString('hex'),
       email,
       name,
+      ...credentials,
       referralCode: referralCode || null,
       referrerId,
       status: 'email_verification_pending',
@@ -244,7 +294,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     await write(requestKey, record);
     const tokenKey = 'confirmations/' + hash(token);
     await write(tokenKey, { requestKey, expiresAt: record.confirmationExpiresAt });
-    const link = mailUrl('/customer-portal.html', token, 'confirm');
+    const link = mailUrl('/', token, 'confirm');
     if (record.referralCode && !record.referralUseNotifiedAt) {
       try { record = await notifyReferralUse(requestKey, record); } catch {}
     }
@@ -254,8 +304,8 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
         to: [email],
         subject: 'Verify your BIOHAZARDTVUSA customer portal request',
         text: 'Verify this email address to request BIOHAZARDTVUSA customer portal access:\n\n' +
-          link + '\n\nThe link expires in 24 hours. Portal access is reviewed manually and is not an order or payment confirmation.',
-        html: '<!doctype html><html lang="en"><body style="margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.6 Arial,sans-serif;padding:32px 16px"><main style="max-width:560px;margin:auto;padding:28px;background:#16171d;border:1px solid #35302a;border-radius:14px"><h1 style="color:#e6bd62">Verify your email</h1><p>Verify this address to request BIOHAZARDTVUSA customer portal access. The business reviews requests before enabling an account.</p><p><a href="' +
+          link + '\n\nThe link expires in 24 hours. After verifying, the business reviews your request. This is not an order or payment confirmation.',
+        html: '<!doctype html><html lang="en"><body style="margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.6 Arial,sans-serif;padding:32px 16px"><main style="max-width:560px;margin:auto;padding:28px;background:#16171d;border:1px solid #35302a;border-radius:14px"><h1 style="color:#e6bd62">Verify your email</h1><p>Verify this address to request BIOHAZARDTVUSA customer portal access. The business reviews requests before enabling an account. After approval, sign in with the password you created.</p><p><a href="' +
           escapeHtml(link) + '" style="display:inline-block;padding:14px 20px;background:#e6bd62;color:#151515;text-decoration:none;font-weight:bold;border-radius:8px">Verify email address</a></p><p>This link expires in 24 hours. This is not an order or payment confirmation.</p></main></body></html>'
       });
     } catch {
@@ -282,7 +332,11 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     if (!confirmation || confirmation.expiresAt <= now()) return json(410, { error: 'This verification link expired. Submit your request again.' });
     let requestRecord = await read(confirmation.requestKey);
     if (!requestRecord) return json(410, { error: 'This customer request is no longer available.' });
-    if (requestRecord.status === 'approved') return json(200, { message: 'Your customer portal account is approved. Request a sign-in link to continue.' });
+    if (requestRecord.status === 'approved') return json(200, {
+      message: requestRecord.passwordHash
+        ? 'Your account is approved. Sign in on the homepage using the password you created.'
+        : 'Your account is approved. Use Password help on the homepage to set a password.'
+    });
     if (requestRecord.status === 'rejected') return json(410, { error: 'This customer portal request was not approved. Contact us on WhatsApp if you need help.' });
     if (requestRecord.confirmationTokenHash !== hash(token) && requestRecord.status !== 'verified_pending_admin') {
       return json(410, { error: 'This verification link is no longer active.' });
@@ -316,12 +370,90 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     if (!validEmail(email)) return json(400, { error: 'Enter a valid email address.' });
     if (await rateLimited(request, 'login', email, 4)) return json(429, { error: 'Please wait before requesting another sign-in email.' });
     const customer = await read(emailKey(email));
-    if (customer?.status === 'active') {
+    if (customer?.status === 'active' && !customer.passwordHash) {
       try { await sendLoginLink(customer); } catch {
         return json(503, { error: 'We could not send a sign-in email. Please try again later or contact us on WhatsApp.' });
       }
     }
-    return json(202, { message: 'If this email belongs to an approved customer account, a one-time sign-in link is on its way. Check your inbox and spam folder.' });
+    return json(202, { message: 'Password sign-in is available on the homepage. If an older approved account still needs a password, use Password help to receive a setup link.' });
+  }
+
+  async function passwordLogin(request) {
+    if (request.method !== 'POST') return json(405, { error: 'Use the sign-in form on the website.' });
+    let input;
+    try { input = await parseBody(request); } catch { return json(400, { error: 'Enter your email and password.' }); }
+    const email = normalizeEmail(input?.email);
+    const password = typeof input?.password === 'string' ? input.password : '';
+    if (!validEmail(email) || !validPassword(password)) return json(400, { error: 'Enter your email and password.' });
+    if (await rateLimited(request, 'password-login', email, 8)) return json(429, { error: 'Too many sign-in attempts. Wait a while and try again.' });
+    const customer = await read(emailKey(email));
+    const matches = await passwordMatches(password, customer);
+    if (customer?.status !== 'active' || !matches) {
+      return json(401, { error: 'Email or password did not match an approved account. If this is your first sign-in, use Password help to set a password.' });
+    }
+    return startSession(customer);
+  }
+
+  async function requestPasswordReset(request) {
+    if (request.method !== 'POST') return json(405, { error: 'Use the password help form on the website.' });
+    if (!emailConfigured()) return json(503, { error: 'Password help email is not available. Please contact us on WhatsApp.' });
+    let input;
+    try { input = await parseBody(request); } catch { return json(400, { error: 'Enter your email address.' }); }
+    const email = normalizeEmail(input?.email);
+    if (!validEmail(email)) return json(400, { error: 'Enter a valid email address.' });
+    if (await rateLimited(request, 'password-reset', email, 4)) return json(429, { error: 'Please wait before requesting another password email.' });
+    const customer = await read(emailKey(email));
+    if (customer?.status === 'active') {
+      const token = randomBytes(32).toString('hex');
+      const tokenKey = 'password-resets/' + hash(token);
+      await write(tokenKey, { customerId: customer.id, expiresAt: now() + PASSWORD_RESET_TTL_MS });
+      const link = mailUrl('/', token, 'password-reset');
+      try {
+        await sendMail({
+          from: env.RESEND_FROM_EMAIL.trim(),
+          to: [customer.email],
+          subject: 'Set or reset your BIOHAZARDTVUSA password',
+          text: 'Use this one-time link to set or reset the password for your BIOHAZARDTVUSA customer portal:\n\n' +
+            link + '\n\nIt expires in 30 minutes. If you did not request this, ignore this email.',
+          html: '<!doctype html><html lang="en"><body style="margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.6 Arial,sans-serif;padding:32px 16px"><main style="max-width:560px;margin:auto;padding:28px;background:#16171d;border:1px solid #35302a;border-radius:14px"><h1 style="color:#e6bd62">Set or reset your password</h1><p>Use this one-time link to choose a password for your BIOHAZARDTVUSA customer portal.</p><p><a href="' +
+            escapeHtml(link) + '" style="display:inline-block;padding:14px 20px;background:#e6bd62;color:#151515;text-decoration:none;font-weight:bold;border-radius:8px">Choose password</a></p><p>This link expires in 30 minutes. If you did not request this, ignore this email.</p></main></body></html>'
+        });
+      } catch {
+        await store.delete(tokenKey);
+        return json(503, { error: 'We could not send password help email. Please try again later.' });
+      }
+    }
+    return json(202, { message: 'If that address belongs to an approved client account, password instructions are on the way.' });
+  }
+
+  async function consumePasswordReset(request) {
+    if (request.method !== 'POST') return json(405, { error: 'Use the password form on the website.' });
+    let input;
+    try { input = await parseBody(request); } catch { return json(400, { error: 'This password link is invalid.' }); }
+    const token = input?.token;
+    const password = typeof input?.password === 'string' ? input.password : '';
+    const passwordConfirm = typeof input?.passwordConfirm === 'string' ? input.passwordConfirm : '';
+    if (!validToken(token)) return json(400, { error: 'This password link is invalid.' });
+    if (!validPassword(password) || password !== passwordConfirm) {
+      return json(400, { error: 'Choose a password of at least 12 characters and enter it the same way twice.' });
+    }
+    const tokenKey = 'password-resets/' + hash(token);
+    const reset = await read(tokenKey);
+    if (!reset || reset.expiresAt <= now()) {
+      if (reset) await store.delete(tokenKey);
+      return json(410, { error: 'This password link expired. Request a new one.' });
+    }
+    const customer = await read('customers/' + reset.customerId);
+    if (customer?.status !== 'active') {
+      await store.delete(tokenKey);
+      return json(410, { error: 'This customer account is not active.' });
+    }
+    const credentials = await passwordCredentials(password);
+    await write(emailKey(customer.email), { ...customer, ...credentials, passwordUpdatedAt: new Date(now()).toISOString() });
+    await store.delete(tokenKey);
+    await revokeCustomerSessions(customer.id);
+    await revokeCustomerPasswordResets(customer.id);
+    return startSession({ ...customer, ...credentials });
   }
 
   async function consumeLogin(request) {
@@ -338,10 +470,8 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       await store.delete(loginKey);
       return json(410, { error: 'This customer account is not active. Contact us on WhatsApp for help.' });
     }
-    const sessionToken = randomBytes(32).toString('hex');
-    await write('sessions/' + hash(sessionToken), { customerId: customer.id, expiresAt: now() + SESSION_TTL_MS });
     await store.delete(loginKey);
-    return json(200, { ok: true }, { 'set-cookie': sessionCookie(sessionToken) });
+    return startSession(customer);
   }
 
   async function profile(request) {
@@ -356,7 +486,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       ['email_verification_pending', 'verified_pending_admin'].includes(item.status)).length;
     const pendingMonths = referrals.filter(item => item.status === 'earned').reduce((sum, item) => sum + (item.rewardMonths || 1), 0);
     const appliedMonths = referrals.filter(item => item.status === 'applied').reduce((sum, item) => sum + (item.rewardMonths || 1), 0);
-    const link = new WebURL('/customer-portal.html?ref=' + encodeURIComponent(customer.referralCode) + '#request-card', siteBase).href;
+    const link = new WebURL('/?ref=' + encodeURIComponent(customer.referralCode) + '#client-portal', siteBase).href;
     const activeContests = contests.filter(item => Date.parse(item.startAt) <= now() && Date.parse(item.endAt) >= now())
       .map(contest => ({
         id: contest.id,
@@ -566,6 +696,9 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
         name: requestRecord.name,
         status: 'active',
         referralCode,
+        ...(requestRecord.passwordHash && requestRecord.passwordSalt
+          ? { passwordHash: requestRecord.passwordHash, passwordSalt: requestRecord.passwordSalt }
+          : {}),
         approvedRequestId: requestRecord.id,
         approvedAt: new Date(now()).toISOString()
       };
@@ -593,14 +726,18 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     await store.delete(reviewKey);
     let notificationSent = true;
     try {
-      const url = new WebURL('/customer-portal.html', siteBase).href;
+      const url = new WebURL('/#client-portal', siteBase).href;
+      const signInInstructions = customer.passwordHash
+        ? 'Sign in on the BIOHAZARDTVUSA homepage using the email address and password you chose.'
+        : 'Use Password help on the homepage to set a password with a secure email link.';
       await sendMail({
         from: env.RESEND_FROM_EMAIL.trim(),
         to: [customer.email],
         subject: 'Your BIOHAZARDTVUSA customer portal is ready',
-        text: 'Your customer portal access is approved. Request a one-time sign-in link here:\n\n' + url,
-        html: '<!doctype html><html lang="en"><body style="margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.6 Arial,sans-serif;padding:32px 16px"><main style="max-width:560px;margin:auto;padding:28px;background:#16171d;border:1px solid #35302a;border-radius:14px"><h1 style="color:#e6bd62">Portal access approved</h1><p>Your BIOHAZARDTVUSA customer portal is ready. Request a one-time sign-in link to view your referral code and account details.</p><p><a href="' +
-          escapeHtml(url) + '" style="display:inline-block;padding:14px 20px;background:#e6bd62;color:#151515;text-decoration:none;font-weight:bold;border-radius:8px">Open customer portal</a></p></main></body></html>'
+        text: 'Your customer portal access is approved. ' + signInInstructions + '\n\nOpen the homepage here:\n' + url,
+        html: '<!doctype html><html lang="en"><body style="margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.6 Arial,sans-serif;padding:32px 16px"><main style="max-width:560px;margin:auto;padding:28px;background:#16171d;border:1px solid #35302a;border-radius:14px"><h1 style="color:#e6bd62">Portal access approved</h1><p>Your BIOHAZARDTVUSA customer portal is ready. ' +
+          escapeHtml(signInInstructions) + '</p><p><a href="' +
+          escapeHtml(url) + '" style="display:inline-block;padding:14px 20px;background:#e6bd62;color:#151515;text-decoration:none;font-weight:bold;border-radius:8px">Open the homepage</a></p></main></body></html>'
       });
     } catch { notificationSent = false; }
     return json(200, {
@@ -621,6 +758,9 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       if (action === 'verify-account') return await verifyAccount(request);
       if (action === 'request-login') return await requestLogin(request);
       if (action === 'consume-login') return await consumeLogin(request);
+      if (action === 'password-login') return await passwordLogin(request);
+      if (action === 'password-reset-request') return await requestPasswordReset(request);
+      if (action === 'password-reset') return await consumePasswordReset(request);
       if (action === 'profile') return await profile(request);
       if (action === 'admin-data') return await adminData(request);
       if (action === 'contest-create') return await createContest(request);

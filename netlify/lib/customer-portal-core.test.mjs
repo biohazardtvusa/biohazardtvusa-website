@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createCustomerPortalHandler } from './customer-portal-core.mjs';
 
+const TEST_PASSWORD = 'Referrals-Work-2026';
+
 class MemoryStore {
   values = new Map();
   async get(key, options = {}) {
@@ -53,7 +55,13 @@ async function call(handler, action, { method = 'POST', body, headers = {} } = {
 
 async function approveRequest(handler, messages, email, { referralCode = '', newClient = false } = {}) {
   const requested = await call(handler, 'request-account', {
-    body: { name: email.split('@')[0], email, referralCode }
+    body: {
+      name: email.split('@')[0],
+      email,
+      password: TEST_PASSWORD,
+      passwordConfirm: TEST_PASSWORD,
+      referralCode
+    }
   });
   assert.equal(requested.response.status, 202);
   const confirmationToken = messages.at(-1).text.match(/#confirm=([a-f0-9]{64})/)?.[1];
@@ -76,38 +84,74 @@ async function approveRequest(handler, messages, email, { referralCode = '', new
   return { preview: preview.body, decision, email };
 }
 
-test('approved customers receive unique codes and secure email-link sessions', async () => {
+test('approved customers sign in with a password and receive unique referral codes', async () => {
   const { handler, messages } = setup();
   const approved = await approveRequest(handler, messages, 'client@example.com');
   assert.equal(approved.decision.response.status, 200);
   assert.equal(approved.preview.email, 'client@example.com');
-  const login = await call(handler, 'request-login', { body: { email: 'client@example.com' } });
-  assert.equal(login.response.status, 202);
-  const loginToken = messages.at(-1).text.match(/#login=([a-f0-9]{64})/)?.[1];
-  assert.ok(loginToken);
-  const signedIn = await call(handler, 'consume-login', { body: { token: loginToken } });
+  const wrongPassword = await call(handler, 'password-login', {
+    body: { email: 'client@example.com', password: 'Incorrect-password-2026' }
+  });
+  assert.equal(wrongPassword.response.status, 401);
+  const signedIn = await call(handler, 'password-login', {
+    body: { email: 'client@example.com', password: TEST_PASSWORD }
+  });
   assert.equal(signedIn.response.status, 200);
+  const emailCount = messages.length;
+  const legacySignIn = await call(handler, 'request-login', { body: { email: 'client@example.com' } });
+  assert.equal(legacySignIn.response.status, 202);
+  assert.equal(messages.length, emailCount);
+  assert.match(legacySignIn.body.message, /Password sign-in is available on the homepage/);
   assert.match(signedIn.response.headers.get('set-cookie'), /HttpOnly; Secure; SameSite=Lax/);
   const cookie = signedIn.response.headers.get('set-cookie').split(';')[0];
   const profile = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
   assert.equal(profile.response.status, 200);
   assert.match(profile.body.referralCode, /^BHTV-[A-F0-9]{10}$/);
-  assert.match(profile.body.referralLink, /customer-portal\.html\?ref=/);
+  assert.match(profile.body.referralLink, /\/\?ref=BHTV-[A-F0-9]{10}#client-portal$/);
   assert.equal(profile.body.appliedMonths, 0);
   assert.equal(profile.body.pendingMonths, 0);
+});
+
+test('new account requests require a sufficiently long matching password', async () => {
+  const { handler, messages } = setup();
+  const tooShort = await call(handler, 'request-account', {
+    body: {
+      name: 'New Client',
+      email: 'short-password@example.com',
+      password: 'short',
+      passwordConfirm: 'short'
+    }
+  });
+  assert.equal(tooShort.response.status, 400);
+  const mismatch = await call(handler, 'request-account', {
+    body: {
+      name: 'New Client',
+      email: 'mismatch@example.com',
+      password: TEST_PASSWORD,
+      passwordConfirm: 'Different-Password-2026'
+    }
+  });
+  assert.equal(mismatch.response.status, 400);
+  assert.equal(messages.length, 0);
 });
 
 test('a referral alerts the owner and is recorded only after Xstream setup and extension', async () => {
   const { handler, messages } = setup();
   await approveRequest(handler, messages, 'referrer@example.com');
-  const login = await call(handler, 'request-login', { body: { email: 'referrer@example.com' } });
-  const loginToken = messages.at(-1).text.match(/#login=([a-f0-9]{64})/)?.[1];
-  const signedIn = await call(handler, 'consume-login', { body: { token: loginToken } });
+  const signedIn = await call(handler, 'password-login', {
+    body: { email: 'referrer@example.com', password: TEST_PASSWORD }
+  });
   const cookie = signedIn.response.headers.get('set-cookie').split(';')[0];
   const profileBefore = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
 
   const requested = await call(handler, 'request-account', {
-    body: { name: 'New Client', email: 'new-client@example.com', referralCode: profileBefore.body.referralCode }
+    body: {
+      name: 'New Client',
+      email: 'new-client@example.com',
+      password: TEST_PASSWORD,
+      passwordConfirm: TEST_PASSWORD,
+      referralCode: profileBefore.body.referralCode
+    }
   });
   assert.equal(requested.response.status, 202);
   assert.ok(messages.some(message => message.subject === 'Referral code used — Xstream setup needed'));
@@ -148,18 +192,30 @@ test('a referral alerts the owner and is recorded only after Xstream setup and e
 test('invalid and self-referral codes cannot create an account request', async () => {
   const { handler, messages } = setup();
   const invalid = await call(handler, 'request-account', {
-    body: { name: 'Customer', email: 'customer@example.com', referralCode: 'NOT-A-CODE' }
+    body: {
+      name: 'Customer',
+      email: 'customer@example.com',
+      password: TEST_PASSWORD,
+      passwordConfirm: TEST_PASSWORD,
+      referralCode: 'NOT-A-CODE'
+    }
   });
   assert.equal(invalid.response.status, 400);
   assert.equal(messages.length, 0);
   await approveRequest(handler, messages, 'client@example.com');
-  await call(handler, 'request-login', { body: { email: 'client@example.com' } });
-  const loginToken = messages.at(-1).text.match(/#login=([a-f0-9]{64})/)?.[1];
-  const signedIn = await call(handler, 'consume-login', { body: { token: loginToken } });
+  const signedIn = await call(handler, 'password-login', {
+    body: { email: 'client@example.com', password: TEST_PASSWORD }
+  });
   const cookie = signedIn.response.headers.get('set-cookie').split(';')[0];
   const profile = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
   const selfReferral = await call(handler, 'request-account', {
-    body: { name: 'Client', email: 'client@example.com', referralCode: profile.body.referralCode }
+    body: {
+      name: 'Client',
+      email: 'client@example.com',
+      password: TEST_PASSWORD,
+      passwordConfirm: TEST_PASSWORD,
+      referralCode: profile.body.referralCode
+    }
   });
   assert.equal(selfReferral.response.status, 202);
   assert.equal(profile.body.appliedMonths, 0);
@@ -195,7 +251,13 @@ test('a failed initial referral alert is retried when the referred email is veri
     }
   });
   const submitted = await call(handler, 'request-account', {
-    body: { name: 'Referred Client', email: 'referred@example.com', referralCode }
+    body: {
+      name: 'Referred Client',
+      email: 'referred@example.com',
+      password: TEST_PASSWORD,
+      passwordConfirm: TEST_PASSWORD,
+      referralCode
+    }
   });
   assert.equal(submitted.response.status, 202);
   assert.match(submitted.body.message, /business will receive the referral alert after your address is verified/);
@@ -208,9 +270,14 @@ test('a failed initial referral alert is retried when the referred email is veri
   assert.ok(messages.some(message => message.subject === 'Verified referral ready for Xstream setup'));
 });
 
-test('one-time login links cannot be reused and sessions can be revoked', async () => {
-  const { handler, messages } = setup();
+test('legacy one-time login links cannot be reused and sessions can be revoked', async () => {
+  const { handler, messages, store } = setup();
   await approveRequest(handler, messages, 'owner@example.net');
+  const customerKey = 'customers/' + createHash('sha256').update('owner@example.net').digest('hex');
+  const legacyCustomer = await store.get(customerKey, { type: 'json' });
+  delete legacyCustomer.passwordHash;
+  delete legacyCustomer.passwordSalt;
+  await store.setJSON(customerKey, legacyCustomer);
   await call(handler, 'request-login', { body: { email: 'owner@example.net' } });
   const token = messages.at(-1).text.match(/#login=([a-f0-9]{64})/)?.[1];
   const first = await call(handler, 'consume-login', { body: { token } });
@@ -221,6 +288,52 @@ test('one-time login links cannot be reused and sessions can be revoked', async 
   await call(handler, 'logout', { headers: { cookie } });
   const profile = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
   assert.equal(profile.response.status, 401);
+});
+
+test('password reset links set a password, sign in, and revoke older sessions', async () => {
+  const { handler, messages } = setup();
+  await approveRequest(handler, messages, 'password-reset@example.com');
+  const firstLogin = await call(handler, 'password-login', {
+    body: { email: 'password-reset@example.com', password: TEST_PASSWORD }
+  });
+  assert.equal(firstLogin.response.status, 200);
+  const oldCookie = firstLogin.response.headers.get('set-cookie').split(';')[0];
+
+  const requested = await call(handler, 'password-reset-request', {
+    body: { email: 'password-reset@example.com' }
+  });
+  assert.equal(requested.response.status, 202);
+  const olderResetToken = messages.at(-1).text.match(/#password-reset=([a-f0-9]{64})/)?.[1];
+  const secondRequest = await call(handler, 'password-reset-request', {
+    body: { email: 'password-reset@example.com' }
+  });
+  assert.equal(secondRequest.response.status, 202);
+  const resetToken = messages.at(-1).text.match(/#password-reset=([a-f0-9]{64})/)?.[1];
+  assert.ok(resetToken && olderResetToken);
+  const reset = await call(handler, 'password-reset', {
+    body: {
+      token: resetToken,
+      password: 'New-Portal-Password-2027',
+      passwordConfirm: 'New-Portal-Password-2027'
+    }
+  });
+  assert.equal(reset.response.status, 200);
+  assert.equal((await call(handler, 'password-reset', {
+    body: {
+      token: olderResetToken,
+      password: 'Old-Portal-Password-2027',
+      passwordConfirm: 'Old-Portal-Password-2027'
+    }
+  })).response.status, 410);
+  const newCookie = reset.response.headers.get('set-cookie').split(';')[0];
+  assert.equal((await call(handler, 'profile', { method: 'GET', headers: { cookie: oldCookie } })).response.status, 401);
+  assert.equal((await call(handler, 'profile', { method: 'GET', headers: { cookie: newCookie } })).response.status, 200);
+  assert.equal((await call(handler, 'password-login', {
+    body: { email: 'password-reset@example.com', password: TEST_PASSWORD }
+  })).response.status, 401);
+  assert.equal((await call(handler, 'password-login', {
+    body: { email: 'password-reset@example.com', password: 'New-Portal-Password-2027' }
+  })).response.status, 200);
 });
 
 test('contest tracker counts only owner-approved referrals inside the contest period', async () => {
@@ -256,9 +369,9 @@ test('contest tracker counts only owner-approved referrals inside the contest pe
   assert.equal(expired.response.status, 401);
 
   await approveRequest(handler, messages, 'contest-referrer@example.com');
-  await call(handler, 'request-login', { body: { email: 'contest-referrer@example.com' } });
-  const loginToken = messages.at(-1).text.match(/#login=([a-f0-9]{64})/)?.[1];
-  const signIn = await call(handler, 'consume-login', { body: { token: loginToken } });
+  const signIn = await call(handler, 'password-login', {
+    body: { email: 'contest-referrer@example.com', password: TEST_PASSWORD }
+  });
   const cookie = signIn.response.headers.get('set-cookie').split(';')[0];
   const referrerProfile = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
 
