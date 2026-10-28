@@ -12,6 +12,10 @@
 <style>
 textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;margin:8px 0 16px}textarea{min-height:190px;resize:vertical}.campaign-preview-box{padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow-wrap:anywhere;white-space:pre-wrap}.campaign-fields label{margin-top:12px}.approval input{width:auto;margin-right:10px;vertical-align:middle}.campaign-note{font-size:14px}
 </style>
+<style>
+.referral-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.referral-fields label{margin-top:8px}.table-wrap{overflow-x:auto;margin:12px 0 20px;border:1px solid var(--line);border-radius:10px}table{width:100%;min-width:560px;border-collapse:collapse;background:var(--bg)}th,td{padding:11px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}th{color:var(--gold);font-size:14px}td{overflow-wrap:anywhere}.rank{color:var(--gold);font-weight:700}.contest-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+@media(max-width:520px){.referral-fields{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
 <main>
@@ -64,6 +68,35 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
 </section>
 <p id="campaign-status" role="status" aria-live="polite"></p>
 </section>
+<section class="card" id="referral-admin-card">
+<h2>Client referrals and contest tracker</h2>
+<p>Only business-confirmed new-client referrals count toward contest results. A contest tracks referrals approved between its start and end dates; both dates use this device’s local time and are included. Create the period before announcing the contest; prizes are managed separately.</p>
+<p class="summary" id="referral-admin-summary">Loading referral totals…</p>
+<form id="contest-form">
+<h3>Create a contest period</h3>
+<div class="referral-fields">
+<div><label for="contest-name">Contest name</label><input id="contest-name" type="text" maxlength="80" minlength="2" required placeholder="Example: November referral contest"></div>
+<div><label for="contest-start">Start date</label><input id="contest-start" type="date" required></div>
+<div><label for="contest-end">End date</label><input id="contest-end" type="date" required></div>
+</div>
+<button class="btn" id="contest-create-button" type="submit">Create contest period</button>
+</form>
+<p id="referral-admin-status" role="status" aria-live="polite"></p>
+<h3>Contest leaderboard</h3>
+<label for="contest-select">Choose a contest period</label>
+<select id="contest-select"><option value="">No contest periods yet</option></select>
+<p id="contest-result-summary" class="small"></p>
+<div class="contest-tools"><button class="btn secondary" id="contest-export" type="button" disabled>Download contest results CSV</button></div>
+<div class="table-wrap"><table>
+<thead><tr><th>Rank</th><th>Client</th><th>Referral code</th><th>Confirmed referrals</th></tr></thead>
+<tbody id="contest-results-body"><tr><td colspan="4">Create a contest period to track contest referrals.</td></tr></tbody>
+</table></div>
+<h3>All-time referral activity</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>Client</th><th>Referral code</th><th>Confirmed referrals</th><th>Free months earned</th></tr></thead>
+<tbody id="referral-alltime-body"><tr><td colspan="4">Loading referral totals…</td></tr></tbody>
+</table></div>
+</section>
 <form id="unsubscribe-form">
 <h2>Remove an address from marketing</h2>
 <p>Use this when someone asks to unsubscribe. They will be excluded from subsequent downloads; you must also suppress them in any lists already imported into an email service.</p>
@@ -94,8 +127,24 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
       const body = await response.json().catch(() => ({}));
       if (response.status === 401) {
         token = ''; accessPanel.hidden = false; managePanel.hidden = true;
+        status.textContent = 'Your secure business access link expired. Request a new one to reopen the referral tracker.';
       }
       throw new Error(body.error || 'We could not complete this request. Please try again.');
+    }
+    return response;
+  }
+  async function referralApi(action, options = {}) {
+    const response = await fetch('/.netlify/functions/customer-portal?action=' + action, {
+      ...options,
+      headers: { accept: 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}), ...(options.body ? { 'content-type': 'application/json' } : {}), ...options.headers }
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401) {
+        token = ''; accessPanel.hidden = false; managePanel.hidden = true;
+        status.textContent = 'Your secure business access link expired. Request a new one to reopen the referral tracker.';
+      }
+      throw new Error(body.error || 'We could not load the referral tracker. Please try again.');
     }
     return response;
   }
@@ -148,6 +197,166 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
       activeCampaignId = '';
     }
   }
+  const referralSummary = document.getElementById('referral-admin-summary');
+  const referralStatus = document.getElementById('referral-admin-status');
+  const contestSelect = document.getElementById('contest-select');
+  const contestResultsBody = document.getElementById('contest-results-body');
+  const contestResultSummary = document.getElementById('contest-result-summary');
+  const contestExportButton = document.getElementById('contest-export');
+  let currentContestData = null;
+  const csvCell = value => '"' + String(value ?? '').replaceAll('"', '""') + '"';
+  function statusForContest(contest) {
+    const now = Date.now();
+    const start = Date.parse(contest.startAt);
+    const end = Date.parse(contest.endAt);
+    return now < start ? 'Upcoming' : now <= end ? 'Active' : 'Ended';
+  }
+  function tableRow(cells, rank = '') {
+    const row = document.createElement('tr');
+    if (rank) {
+      const rankCell = document.createElement('td');
+      rankCell.className = 'rank';
+      rankCell.textContent = String(rank);
+      row.append(rankCell);
+    }
+    for (const value of cells) {
+      const cell = document.createElement('td');
+      cell.textContent = String(value ?? '');
+      row.append(cell);
+    }
+    return row;
+  }
+  async function loadContestResults() {
+    const id = contestSelect.value;
+    currentContestData = null;
+    contestExportButton.disabled = true;
+    contestResultsBody.replaceChildren();
+    if (!id) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 4;
+      cell.textContent = 'Create a contest period to track contest referrals.';
+      row.append(cell);
+      contestResultsBody.append(row);
+      contestResultSummary.textContent = '';
+      return;
+    }
+    try {
+      const data = await (await referralApi('contest-results&id=' + encodeURIComponent(id))).json();
+      currentContestData = data;
+      const contest = data.contest;
+      const start = new Date(contest.startAt).toLocaleDateString();
+      const end = new Date(contest.endAt).toLocaleDateString();
+      contestResultSummary.textContent = contest.name + ' · ' + statusForContest(contest) + ' · ' + start + ' to ' + end +
+        ' · counts after business approval';
+      if (!data.leaderboard.length) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 4;
+        cell.textContent = 'No confirmed referrals in this contest period yet.';
+        row.append(cell);
+        contestResultsBody.append(row);
+      } else {
+        data.leaderboard.forEach((person, index) => {
+          contestResultsBody.append(tableRow([person.name + ' (' + person.email + ')', person.referralCode, person.referrals], index + 1));
+        });
+      }
+      contestExportButton.disabled = !data.leaderboard.length;
+    } catch (error) {
+      referralStatus.textContent = error.message;
+    }
+  }
+  async function refreshReferralAdmin() {
+    try {
+      const data = await (await referralApi('admin-data')).json();
+      referralSummary.textContent = data.totals.activeClients + ' approved clients · ' +
+        data.totals.approvedReferrals + ' confirmed referrals · ' + data.totals.earnedMonths + ' free months earned';
+      const allTimeBody = document.getElementById('referral-alltime-body');
+      allTimeBody.replaceChildren();
+      if (!data.leaderboard.length) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 4;
+        cell.textContent = 'No approved customer accounts yet.';
+        row.append(cell);
+        allTimeBody.append(row);
+      } else {
+        data.leaderboard.forEach(person => {
+          allTimeBody.append(tableRow([person.name + ' (' + person.email + ')', person.referralCode, person.referrals, person.earnedMonths]));
+        });
+      }
+      const priorId = contestSelect.value;
+      contestSelect.replaceChildren();
+      if (!data.contests.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No contest periods yet';
+        contestSelect.append(option);
+      } else {
+        for (const contest of data.contests) {
+          const option = document.createElement('option');
+          option.value = contest.id;
+          option.textContent = contest.name + ' · ' + statusForContest(contest);
+          contestSelect.append(option);
+        }
+        if (data.contests.some(contest => contest.id === priorId)) contestSelect.value = priorId;
+      }
+      await loadContestResults();
+    } catch (error) {
+      referralSummary.textContent = 'Referral totals are unavailable.';
+      referralStatus.textContent = error.message;
+    }
+  }
+  document.getElementById('contest-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+    const name = document.getElementById('contest-name').value.trim();
+    const startDate = document.getElementById('contest-start').value;
+    const endDate = document.getElementById('contest-end').value;
+    const startAt = new Date(startDate + 'T00:00:00');
+    const endAt = new Date(endDate + 'T23:59:59.999');
+    if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime()) || endAt <= startAt) {
+      referralStatus.textContent = 'Choose a valid contest end date after its start date.';
+      return;
+    }
+    const button = document.getElementById('contest-create-button');
+    button.disabled = true;
+    referralStatus.textContent = 'Creating contest period…';
+    try {
+      const data = await (await referralApi('contest-create', {
+        method: 'POST',
+        body: JSON.stringify({ name, startAt: startAt.toISOString(), endAt: endAt.toISOString() })
+      })).json();
+      form.reset();
+      referralStatus.textContent = 'Contest period created. Referral counts begin when you approve qualifying new-client referrals.';
+      await refreshReferralAdmin();
+      contestSelect.value = data.contest.id;
+      await loadContestResults();
+    } catch (error) {
+      referralStatus.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+  contestSelect.addEventListener('change', loadContestResults);
+  contestExportButton.addEventListener('click', () => {
+    if (!currentContestData?.leaderboard?.length) return;
+    const rows = [
+      ['Rank', 'Client name', 'Email', 'Referral code', 'Confirmed referrals'],
+      ...currentContestData.leaderboard.map((person, index) =>
+        [index + 1, person.name, person.email, person.referralCode, person.referrals])
+    ];
+    const csv = rows.map(row => row.map(csvCell).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'biohazardtvusa-' + currentContestData.contest.id + '-referral-results.csv';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
   for (const element of [campaignAudience, campaignSubject, campaignBody]) {
     element.addEventListener('input', clearCampaignPreview);
     element.addEventListener('change', clearCampaignPreview);
@@ -262,7 +471,10 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
     token = ''; managePanel.hidden = true; accessPanel.hidden = false;
     status.textContent = 'Secure access closed. Close this tab to finish.';
   });
-  if (token) refresh().then(restoreCampaignStatus).catch(error => { status.textContent = error.message; });
+  if (token) refresh().then(async () => {
+    await restoreCampaignStatus();
+    await refreshReferralAdmin();
+  }).catch(error => { status.textContent = error.message; });
 })();
 </script>
 </body>

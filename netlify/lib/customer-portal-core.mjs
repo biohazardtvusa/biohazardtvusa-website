@@ -31,13 +31,14 @@ async function parseBody(request, maxLength = 4096) {
   return JSON.parse(text);
 }
 
-export function createCustomerPortalHandler({ store, env = {}, sendMail, now = () => Date.now() }) {
+export function createCustomerPortalHandler({ store, adminStore, env = {}, sendMail, now = () => Date.now() }) {
   const siteBase = env.PUBLIC_SITE_URL || 'https://biohazardtvusa.com/';
   const read = async key => store.get(key, { type: 'json' });
   const write = async (key, value) => store.setJSON(key, value);
   const emailKey = email => 'customers/' + hash(email);
   const applicationKey = email => 'applications/' + hash(email);
   const emailConfigured = () => Boolean(env.RESEND_API_KEY && env.RESEND_FROM_EMAIL && typeof sendMail === 'function');
+  const validContestId = value => typeof value === 'string' && /^[a-f0-9]{32}$/.test(value);
 
   async function listRecords(prefix) {
     const records = [];
@@ -62,6 +63,13 @@ export function createCustomerPortalHandler({ store, env = {}, sendMail, now = (
   async function rateLimited(request, scope, email, emailMax = 4) {
     const ip = request.headers.get('x-nf-client-connection-ip') || 'unknown';
     return await limited(scope + '-ip', ip, 8) || await limited(scope + '-email', email, emailMax);
+  }
+
+  async function adminAuthorized(request) {
+    const token = (request.headers.get('authorization') || '').replace(/^Bearer /, '');
+    if (!validToken(token) || !adminStore) return false;
+    const record = await adminStore.get('access/' + hash(token), { type: 'json' });
+    return Boolean(record && record.expiresAt > now());
   }
 
   function getSessionToken(request) {
@@ -293,10 +301,25 @@ export function createCustomerPortalHandler({ store, env = {}, sendMail, now = (
     if (!customer) return json(401, { error: 'Sign in to view your customer portal.' });
     const referrals = await listRecords('referrals/' + customer.id + '/');
     const applications = await listRecords('applications/');
+    const allReferrals = await listRecords('referrals/');
+    const contests = await listRecords('contests/');
     const pendingReferrals = applications.filter(item => item.referrerId === customer.id &&
       ['email_verification_pending', 'verified_pending_admin'].includes(item.status)).length;
     const earnedMonths = referrals.filter(item => item.status === 'earned').reduce((sum, item) => sum + (item.rewardMonths || 1), 0);
     const link = new WebURL('/customer-portal.html?ref=' + encodeURIComponent(customer.referralCode) + '#request-card', siteBase).href;
+    const activeContests = contests.filter(item => Date.parse(item.startAt) <= now() && Date.parse(item.endAt) >= now())
+      .map(contest => ({
+        id: contest.id,
+        name: contest.name,
+        startAt: contest.startAt,
+        endAt: contest.endAt,
+        referrals: allReferrals.filter(item =>
+          item.referrerId === customer.id &&
+          item.status === 'earned' &&
+          Date.parse(item.earnedAt) >= Date.parse(contest.startAt) &&
+          Date.parse(item.earnedAt) <= Date.parse(contest.endAt)
+        ).length
+      }));
     return json(200, {
       name: customer.name,
       email: customer.email,
@@ -304,8 +327,99 @@ export function createCustomerPortalHandler({ store, env = {}, sendMail, now = (
       referralLink: link,
       pendingReferrals,
       approvedReferrals: referrals.length,
-      earnedMonths
+      earnedMonths,
+      activeContests
     });
+  }
+
+  async function adminData(request) {
+    if (request.method !== 'GET') return json(405, { error: 'Method not allowed.' });
+    if (!await adminAuthorized(request)) return json(401, { error: 'Open your secure business admin link to continue.' });
+    const [customers, referrals, contests] = await Promise.all([
+      listRecords('customers/'),
+      listRecords('referrals/'),
+      listRecords('contests/')
+    ]);
+    const activeCustomers = customers.filter(customer => customer.status === 'active');
+    const counts = new Map();
+    const months = new Map();
+    for (const referral of referrals) {
+      if (referral.status !== 'earned') continue;
+      counts.set(referral.referrerId, (counts.get(referral.referrerId) || 0) + 1);
+      months.set(referral.referrerId, (months.get(referral.referrerId) || 0) + (referral.rewardMonths || 1));
+    }
+    const leaderboard = activeCustomers.map(customer => ({
+      name: customer.name,
+      email: customer.email,
+      referralCode: customer.referralCode,
+      referrals: counts.get(customer.id) || 0,
+      earnedMonths: months.get(customer.id) || 0
+    })).sort((a, b) => b.referrals - a.referrals || a.name.localeCompare(b.name));
+    return json(200, {
+      totals: {
+        activeClients: activeCustomers.length,
+        approvedReferrals: referrals.filter(item => item.status === 'earned').length,
+        earnedMonths: [...months.values()].reduce((sum, value) => sum + value, 0)
+      },
+      leaderboard,
+      contests: contests.sort((a, b) => b.startAt.localeCompare(a.startAt)).slice(0, 50)
+    });
+  }
+
+  async function createContest(request) {
+    if (request.method !== 'POST') return json(405, { error: 'Use the contest form in the secure admin page.' });
+    if (!await adminAuthorized(request)) return json(401, { error: 'Open your secure business admin link to continue.' });
+    let input;
+    try { input = await parseBody(request); } catch { return json(400, { error: 'Enter a contest name and date range.' }); }
+    const name = typeof input?.name === 'string' ? input.name.trim() : '';
+    const startTime = typeof input?.startAt === 'string' ? Date.parse(input.startAt) : NaN;
+    const endTime = typeof input?.endAt === 'string' ? Date.parse(input.endAt) : NaN;
+    if (name.length < 2 || name.length > 80 || !Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) {
+      return json(400, { error: 'Enter a contest name and a valid end date after its start date.' });
+    }
+    if (endTime - startTime > 366 * 24 * 60 * 60 * 1000) return json(400, { error: 'A contest can be up to one year long.' });
+    const contests = await listRecords('contests/');
+    if (contests.length >= 50) return json(409, { error: 'The contest history is full. Archive an older contest before adding another.' });
+    const id = randomBytes(16).toString('hex');
+    const contest = {
+      id,
+      name,
+      startAt: new Date(startTime).toISOString(),
+      endAt: new Date(endTime).toISOString(),
+      createdAt: new Date(now()).toISOString()
+    };
+    await write('contests/' + id, contest);
+    return json(201, { contest });
+  }
+
+  async function contestResults(request) {
+    if (request.method !== 'GET') return json(405, { error: 'Method not allowed.' });
+    if (!await adminAuthorized(request)) return json(401, { error: 'Open your secure business admin link to continue.' });
+    const id = new WebURL(request.url).searchParams.get('id') || '';
+    if (!validContestId(id)) return json(400, { error: 'Choose a valid contest.' });
+    const contest = await read('contests/' + id);
+    if (!contest) return json(404, { error: 'This contest was not found.' });
+    const [customers, referrals] = await Promise.all([
+      listRecords('customers/'),
+      listRecords('referrals/')
+    ]);
+    const counts = new Map();
+    for (const referral of referrals) {
+      const earnedAt = Date.parse(referral.earnedAt);
+      if (referral.status === 'earned' && earnedAt >= Date.parse(contest.startAt) && earnedAt <= Date.parse(contest.endAt)) {
+        counts.set(referral.referrerId, (counts.get(referral.referrerId) || 0) + 1);
+      }
+    }
+    const leaderboard = customers.filter(customer => customer.status === 'active')
+      .map(customer => ({
+        name: customer.name,
+        email: customer.email,
+        referralCode: customer.referralCode,
+        referrals: counts.get(customer.id) || 0
+      }))
+      .filter(item => item.referrals > 0)
+      .sort((a, b) => b.referrals - a.referrals || a.name.localeCompare(b.name));
+    return json(200, { contest, leaderboard });
   }
 
   async function reviewInfo(request) {
@@ -444,6 +558,9 @@ export function createCustomerPortalHandler({ store, env = {}, sendMail, now = (
       if (action === 'request-login') return await requestLogin(request);
       if (action === 'consume-login') return await consumeLogin(request);
       if (action === 'profile') return await profile(request);
+      if (action === 'admin-data') return await adminData(request);
+      if (action === 'contest-create') return await createContest(request);
+      if (action === 'contest-results') return await contestResults(request);
       if (action === 'logout') {
         if (request.method !== 'POST') return json(405, { error: 'Method not allowed.' });
         const token = getSessionToken(request);

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createCustomerPortalHandler } from './customer-portal-core.mjs';
 
 class MemoryStore {
@@ -152,4 +153,80 @@ test('one-time login links cannot be reused and sessions can be revoked', async 
   await call(handler, 'logout', { headers: { cookie } });
   const profile = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
   assert.equal(profile.response.status, 401);
+});
+
+test('contest tracker counts only owner-approved referrals inside the contest period', async () => {
+  let timestamp = Date.parse('2026-11-01T12:00:00.000Z');
+  const now = () => timestamp;
+  const store = new MemoryStore();
+  const adminStore = new MemoryStore();
+  const adminToken = 'a'.repeat(64);
+  const tokenHash = createHash('sha256').update(adminToken).digest('hex');
+  await adminStore.setJSON('access/' + tokenHash, { expiresAt: timestamp + 365 * 24 * 60 * 60 * 1000 });
+  const expiredToken = 'b'.repeat(64);
+  await adminStore.setJSON('access/' + createHash('sha256').update(expiredToken).digest('hex'), { expiresAt: timestamp - 1 });
+  const messages = [];
+  const handler = createCustomerPortalHandler({
+    store,
+    adminStore,
+    now,
+    env: {
+      PUBLIC_SITE_URL: 'https://biohazardtvusa.com/',
+      RESEND_API_KEY: 'test-api-key',
+      RESEND_FROM_EMAIL: 'BIOHAZARDTVUSA <contact@send.biohazardtvusa.com>',
+      REVIEW_ADMIN_EMAIL: 'owner@example.com'
+    },
+    sendMail: async message => { messages.push(message); }
+  });
+  const adminHeaders = { authorization: 'Bearer ' + adminToken };
+  const unauthorized = await call(handler, 'admin-data', { method: 'GET' });
+  assert.equal(unauthorized.response.status, 401);
+  const expired = await call(handler, 'admin-data', {
+    method: 'GET',
+    headers: { authorization: 'Bearer ' + expiredToken }
+  });
+  assert.equal(expired.response.status, 401);
+
+  await approveRequest(handler, messages, 'contest-referrer@example.com');
+  await call(handler, 'request-login', { body: { email: 'contest-referrer@example.com' } });
+  const loginToken = messages.at(-1).text.match(/#login=([a-f0-9]{64})/)?.[1];
+  const signIn = await call(handler, 'consume-login', { body: { token: loginToken } });
+  const cookie = signIn.response.headers.get('set-cookie').split(';')[0];
+  const referrerProfile = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
+
+  const contest = await call(handler, 'contest-create', {
+    headers: adminHeaders,
+    body: {
+      name: 'November referral contest',
+      startAt: '2026-11-01T00:00:00.000Z',
+      endAt: '2026-11-30T23:59:59.999Z'
+    }
+  });
+  assert.equal(contest.response.status, 201);
+
+  timestamp = Date.parse('2026-10-31T12:00:00.000Z');
+  await approveRequest(handler, messages, 'outside-period@example.com', {
+    referralCode: referrerProfile.body.referralCode,
+    newClient: true
+  });
+  timestamp = Date.parse('2026-11-03T12:00:00.000Z');
+  await approveRequest(handler, messages, 'inside-period@example.com', {
+    referralCode: referrerProfile.body.referralCode,
+    newClient: true
+  });
+
+  const results = await call(handler, 'contest-results&id=' + contest.body.contest.id, {
+    method: 'GET',
+    headers: adminHeaders
+  });
+  assert.equal(results.response.status, 200);
+  assert.equal(results.body.leaderboard.length, 1);
+  assert.equal(results.body.leaderboard[0].email, 'contest-referrer@example.com');
+  assert.equal(results.body.leaderboard[0].referrals, 1);
+
+  const profileDuringContest = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
+  assert.equal(profileDuringContest.body.activeContests[0].referrals, 1);
+  const adminData = await call(handler, 'admin-data', { method: 'GET', headers: adminHeaders });
+  assert.equal(adminData.body.totals.approvedReferrals, 2);
+  assert.equal(adminData.body.leaderboard.find(person => person.email === 'contest-referrer@example.com').referrals, 2);
 });
