@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Customer portal | BIOHAZARDTVUSA</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0c10;--panel:#16171d;--panel2:#1d1e24;--line:#393633;--gold:#e6bd62;--text:#f7f1e5;--muted:#bbb7af;--green:#72d8a0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 Arial,Helvetica,sans-serif}
+a{color:var(--gold)}button,input{font:inherit}button{cursor:pointer}
+.shell{max-width:760px;margin:0 auto;padding:20px 18px 64px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0 28px;border-bottom:1px solid var(--line)}
+.brand{text-decoration:none;color:var(--gold);font-size:clamp(18px,4vw,25px);font-weight:900;letter-spacing:.07em}
+.brand small{display:block;color:var(--muted);font-size:10px;letter-spacing:.36em;text-align:center}
+.top-link{font-weight:700;text-decoration:none}
+h1{font-size:clamp(30px,7vw,44px);line-height:1.1;margin:30px 0 10px}
+h2{font-size:22px;margin:0 0 8px}
+.intro,.muted,.small{color:var(--muted)}.intro{margin:0 0 24px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:24px;margin:18px 0}
+.form-grid{display:grid;gap:14px}.field label{display:block;font-weight:700;margin-bottom:6px}
+.field input{width:100%;min-height:48px;padding:11px 13px;background:#0d0e12;border:1px solid #55504a;border-radius:9px;color:var(--text)}
+.field input:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:12px 18px;border:0;border-radius:9px;background:var(--gold);color:#151515;font-weight:800;text-decoration:none}
+.btn.secondary{background:#292a30;color:var(--text);border:1px solid #504b44}
+.form-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:4px}
+.notice{padding:14px 16px;border:1px solid #735f35;border-radius:10px;background:#211d15;color:#e8d9b3}
+.status{min-height:28px;margin:16px 0 0;color:var(--green);font-weight:700}
+.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:18px 0}
+.metric{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:15px}
+.metric strong{display:block;color:var(--gold);font-size:26px}.metric span{color:var(--muted);font-size:14px}
+.codebox{padding:14px;border:1px dashed #927a45;border-radius:10px;background:#0d0e12;font:700 20px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;overflow-wrap:anywhere}
+.foot{margin-top:30px;color:var(--muted);font-size:14px}
+[hidden]{display:none!important}
+@media(max-width:560px){.shell{padding:14px 14px 42px}.card{padding:18px}.metrics{grid-template-columns:1fr}.metric{display:flex;align-items:center;justify-content:space-between;gap:12px}.metric strong{font-size:22px}}
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="top">
+    <a class="brand" href="/">BIOHAZARDTVUSA<small>BIOHAZARD MEDIA</small></a>
+    <a class="top-link" href="/">Back to website</a>
+  </header>
+  <h1>Customer portal</h1>
+  <p class="intro">Sign in to view your personal referral code and earned referral months. Sign-in links are sent to your email; no password or payment card is collected here.</p>
+  <div class="notice">Portal access is reviewed by the business. A request does not start service or confirm payment. If you are new, contact us on WhatsApp to activate service.</div>
+
+  <section class="card" id="login-card">
+    <h2>Sign in</h2>
+    <p class="muted">Enter the email address approved for your BIOHAZARDTVUSA customer account.</p>
+    <form id="login-form" class="form-grid">
+      <div class="field"><label for="login-email">Email address</label><input id="login-email" name="email" type="email" maxlength="254" required autocomplete="email"></div>
+      <div class="form-actions"><button class="btn" type="submit">Email me a sign-in link</button></div>
+    </form>
+  </section>
+
+  <section class="card" id="request-card">
+    <h2>Request customer access</h2>
+    <p class="muted">Already active or signing up through WhatsApp? Verify your email, then the business will confirm your customer status before enabling portal access.</p>
+    <form id="request-form" class="form-grid">
+      <div class="field"><label for="request-name">Your name</label><input id="request-name" name="name" type="text" minlength="2" maxlength="80" required autocomplete="name"></div>
+      <div class="field"><label for="request-email">Email address</label><input id="request-email" name="email" type="email" maxlength="254" required autocomplete="email"></div>
+      <div class="field"><label for="request-referral">Referral code (optional)</label><input id="request-referral" name="referralCode" type="text" maxlength="15" placeholder="BHTV-1234567890" autocapitalize="characters" autocomplete="off"></div>
+      <p class="small">If you use a client’s referral code, the business will confirm the new-client signup before awarding one free month to the referring client. The reward is applied manually.</p>
+      <div class="form-actions"><button class="btn secondary" type="submit">Verify email and request access</button></div>
+    </form>
+  </section>
+
+  <section class="card" id="account-card" hidden>
+    <h2 id="welcome-heading">Your account</h2>
+    <p class="muted" id="account-email"></p>
+    <div class="metrics">
+      <div class="metric"><span>Referrals awaiting review</span><strong id="pending-referrals">0</strong></div>
+      <div class="metric"><span>Approved referrals</span><strong id="approved-referrals">0</strong></div>
+      <div class="metric"><span>Free months earned</span><strong id="earned-months">0</strong></div>
+    </div>
+    <h2>Your personal referral code</h2>
+    <p class="muted">Share this link with a friend. The business confirms a new-client signup before awarding a free month.</p>
+    <p class="codebox" id="referral-code"></p>
+    <div class="form-actions">
+      <button class="btn" id="copy-referral" type="button">Copy referral link</button>
+      <a class="btn secondary" id="share-referral" href="#" target="_blank" rel="noopener noreferrer">Share link</a>
+    </div>
+    <p class="small" id="referral-link-text"></p>
+    <div class="notice"><strong>Billing:</strong> Online payments are not connected yet. No payment details are stored in this portal. Contact us through <a href="https://wa.me/message/OW6W63FGRLMHJ1" target="_blank" rel="noopener noreferrer">WhatsApp</a> to manage service or apply an earned referral month. Cancellation takes effect at the end of the paid month.</div>
+    <div class="form-actions" style="margin-top:18px"><button class="btn secondary" id="sign-out" type="button">Sign out</button></div>
+  </section>
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+  <p class="foot">We use your name, email, customer status, and referral history to operate this portal. Login links expire after 20 minutes and sessions expire after 7 days. <a href="/customer-privacy.html">Customer portal privacy notice</a>.</p>
+</main>
+<script>
+(() => {
+  const endpoint = '/.netlify/functions/customer-portal';
+  const status = document.getElementById('status');
+  const accountCard = document.getElementById('account-card');
+  const loginCard = document.getElementById('login-card');
+  const requestCard = document.getElementById('request-card');
+  const setStatus = message => { status.textContent = message; };
+  const api = async (action, options = {}) => {
+    const response = await fetch(endpoint + '?action=' + encodeURIComponent(action), {
+      ...options,
+      headers: { accept: 'application/json', ...(options.body ? { 'content-type': 'application/json' } : {}), ...options.headers }
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || 'We could not complete this request. Please try again.');
+    return body;
+  };
+  const showAccount = () => { accountCard.hidden = false; loginCard.hidden = true; requestCard.hidden = true; };
+  const showPublic = () => { accountCard.hidden = true; loginCard.hidden = false; requestCard.hidden = false; };
+  const loadProfile = async () => {
+    try {
+      const profile = await api('profile');
+      document.getElementById('welcome-heading').textContent = 'Welcome, ' + profile.name;
+      document.getElementById('account-email').textContent = profile.email;
+      document.getElementById('pending-referrals').textContent = String(profile.pendingReferrals);
+      document.getElementById('approved-referrals').textContent = String(profile.approvedReferrals);
+      document.getElementById('earned-months').textContent = String(profile.earnedMonths);
+      document.getElementById('referral-code').textContent = profile.referralCode;
+      document.getElementById('referral-link-text').textContent = profile.referralLink;
+      document.getElementById('share-referral').href = 'https://wa.me/?text=' + encodeURIComponent('Join BIOHAZARDTVUSA using my referral link: ' + profile.referralLink);
+      document.getElementById('copy-referral').onclick = async () => {
+        try { await navigator.clipboard.writeText(profile.referralLink); setStatus('Your referral link was copied.'); }
+        catch { setStatus('Copy is unavailable in this browser. Select and copy the referral link shown below.'); }
+      };
+      showAccount();
+    } catch (error) {
+      showPublic();
+      if (!/^Sign in to view/.test(error.message)) setStatus(error.message);
+    }
+  };
+  document.getElementById('login-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    setStatus('Requesting your secure sign-in link…');
+    try {
+      const result = await api('request-login', { method: 'POST', body: JSON.stringify({ email: document.getElementById('login-email').value }) });
+      setStatus(result.message);
+    } catch (error) { setStatus(error.message); }
+    finally { button.disabled = false; }
+  });
+  document.getElementById('request-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    setStatus('Submitting your access request…');
+    try {
+      const result = await api('request-account', { method: 'POST', body: JSON.stringify({
+        name: document.getElementById('request-name').value,
+        email: document.getElementById('request-email').value,
+        referralCode: document.getElementById('request-referral').value
+      }) });
+      setStatus(result.message);
+    } catch (error) { setStatus(error.message); }
+    finally { button.disabled = false; }
+  });
+  document.getElementById('sign-out').addEventListener('click', async () => {
+    try { await api('logout', { method: 'POST', body: '{}' }); } catch {}
+    showPublic();
+    setStatus('You have signed out.');
+  });
+  const params = new URLSearchParams(location.search);
+  const referral = params.get('ref') || '';
+  if (/^BHTV-[A-Fa-f0-9]{10}$/.test(referral)) document.getElementById('request-referral').value = referral.toUpperCase();
+  const hashParams = new URLSearchParams(location.hash.slice(1));
+  const confirmationToken = hashParams.get('confirm') || '';
+  const loginToken = hashParams.get('login') || '';
+  history.replaceState(null, '', location.pathname + location.search);
+  if (confirmationToken) {
+    setStatus('Verifying your email…');
+    api('verify-account', { method: 'POST', body: JSON.stringify({ token: confirmationToken }) })
+      .then(result => setStatus(result.message))
+      .catch(error => setStatus(error.message));
+  } else if (loginToken) {
+    setStatus('Signing you in securely…');
+    api('consume-login', { method: 'POST', body: JSON.stringify({ token: loginToken }) })
+      .then(loadProfile)
+      .catch(error => setStatus(error.message));
+  } else {
+    loadProfile();
+  }
+})();
+</script>
+</body>
+</html>
