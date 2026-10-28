@@ -65,7 +65,13 @@ async function approveRequest(handler, messages, email, { referralCode = '', new
   const preview = await call(handler, 'review-info', { body: { token: reviewToken } });
   assert.equal(preview.response.status, 200);
   const decision = await call(handler, 'review-decision', {
-    body: { token: reviewToken, decision: 'approve', confirmActiveCustomer: true, confirmNewClient: newClient }
+    body: {
+      token: reviewToken,
+      decision: 'approve',
+      confirmActiveCustomer: true,
+      confirmNewClient: newClient,
+      confirmRewardApplied: newClient
+    }
   });
   return { preview: preview.body, decision, email };
 }
@@ -87,10 +93,11 @@ test('approved customers receive unique codes and secure email-link sessions', a
   assert.equal(profile.response.status, 200);
   assert.match(profile.body.referralCode, /^BHTV-[A-F0-9]{10}$/);
   assert.match(profile.body.referralLink, /customer-portal\.html\?ref=/);
-  assert.equal(profile.body.earnedMonths, 0);
+  assert.equal(profile.body.appliedMonths, 0);
+  assert.equal(profile.body.pendingMonths, 0);
 });
 
-test('a confirmed referral earns one month only after owner approval', async () => {
+test('a referral alerts the owner and is recorded only after Xstream setup and extension', async () => {
   const { handler, messages } = setup();
   await approveRequest(handler, messages, 'referrer@example.com');
   const login = await call(handler, 'request-login', { body: { email: 'referrer@example.com' } });
@@ -103,20 +110,38 @@ test('a confirmed referral earns one month only after owner approval', async () 
     body: { name: 'New Client', email: 'new-client@example.com', referralCode: profileBefore.body.referralCode }
   });
   assert.equal(requested.response.status, 202);
+  assert.ok(messages.some(message => message.subject === 'Referral code used — Xstream setup needed'));
+  const referralAlert = messages.find(message => message.subject === 'Referral code used — Xstream setup needed');
+  assert.deepEqual(referralAlert.to, ['owner@example.com']);
+  assert.match(referralAlert.text, /has not yet verified their email/);
+  assert.match(referralAlert.text, /referrer@example.com/);
   const confirmToken = messages.at(-1).text.match(/#confirm=([a-f0-9]{64})/)?.[1];
   await call(handler, 'verify-account', { body: { token: confirmToken } });
   const reviewToken = messages.at(-1).text.match(/#review=([a-f0-9]{64})/)?.[1];
+  const reviewInfo = await call(handler, 'review-info', { body: { token: reviewToken } });
+  assert.equal(reviewInfo.body.referrerEmail, 'referrer@example.com');
   const premature = await call(handler, 'review-decision', {
     body: { token: reviewToken, decision: 'approve', confirmActiveCustomer: true }
   });
   assert.equal(premature.response.status, 400);
-  const approved = await call(handler, 'review-decision', {
+  const notExtended = await call(handler, 'review-decision', {
     body: { token: reviewToken, decision: 'approve', confirmActiveCustomer: true, confirmNewClient: true }
+  });
+  assert.equal(notExtended.response.status, 400);
+  const approved = await call(handler, 'review-decision', {
+    body: {
+      token: reviewToken,
+      decision: 'approve',
+      confirmActiveCustomer: true,
+      confirmNewClient: true,
+      confirmRewardApplied: true
+    }
   });
   assert.equal(approved.response.status, 200);
   const profileAfter = await call(handler, 'profile', { method: 'GET', headers: { cookie } });
   assert.equal(profileAfter.body.approvedReferrals, 1);
-  assert.equal(profileAfter.body.earnedMonths, 1);
+  assert.equal(profileAfter.body.appliedMonths, 1);
+  assert.equal(profileAfter.body.pendingMonths, 0);
   assert.equal(profileAfter.body.pendingReferrals, 0);
 });
 
@@ -137,7 +162,50 @@ test('invalid and self-referral codes cannot create an account request', async (
     body: { name: 'Client', email: 'client@example.com', referralCode: profile.body.referralCode }
   });
   assert.equal(selfReferral.response.status, 202);
-  assert.equal(profile.body.earnedMonths, 0);
+  assert.equal(profile.body.appliedMonths, 0);
+});
+
+test('a failed initial referral alert is retried when the referred email is verified', async () => {
+  const store = new MemoryStore();
+  const messages = [];
+  const referralCode = 'BHTV-AAAAAAAAAA';
+  await store.setJSON('customers/referrer-id', {
+    id: 'referrer-id',
+    email: 'referrer@example.com',
+    name: 'Referrer',
+    status: 'active',
+    referralCode
+  });
+  await store.setJSON('referral-codes/' + referralCode, { customerId: 'referrer-id' });
+  let failFirstAlert = true;
+  const handler = createCustomerPortalHandler({
+    store,
+    env: {
+      PUBLIC_SITE_URL: 'https://biohazardtvusa.com/',
+      RESEND_API_KEY: 'test-api-key',
+      RESEND_FROM_EMAIL: 'BIOHAZARDTVUSA <contact@send.biohazardtvusa.com>',
+      REVIEW_ADMIN_EMAIL: 'owner@example.com'
+    },
+    sendMail: async message => {
+      if (message.subject === 'Referral code used — Xstream setup needed' && failFirstAlert) {
+        failFirstAlert = false;
+        throw new Error('Temporary mail failure');
+      }
+      messages.push(message);
+    }
+  });
+  const submitted = await call(handler, 'request-account', {
+    body: { name: 'Referred Client', email: 'referred@example.com', referralCode }
+  });
+  assert.equal(submitted.response.status, 202);
+  assert.match(submitted.body.message, /business will receive the referral alert after your address is verified/);
+  const confirmationToken = messages.find(message => message.to[0] === 'referred@example.com').text.match(/#confirm=([a-f0-9]{64})/)?.[1];
+  const verified = await call(handler, 'verify-account', { body: { token: confirmationToken } });
+  assert.equal(verified.response.status, 200);
+  const alert = messages.find(message => message.subject === 'Referral code used — Xstream setup needed');
+  assert.ok(alert);
+  assert.match(alert.text, /has verified their email/);
+  assert.ok(messages.some(message => message.subject === 'Verified referral ready for Xstream setup'));
 });
 
 test('one-time login links cannot be reused and sessions can be revoked', async () => {

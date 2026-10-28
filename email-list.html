@@ -70,7 +70,7 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
 </section>
 <section class="card" id="referral-admin-card">
 <h2>Client referrals and contest tracker</h2>
-<p>Only business-confirmed new-client referrals count toward contest results. A contest tracks referrals approved between its start and end dates; both dates use this device’s local time and are included. Create the period before announcing the contest; prizes are managed separately.</p>
+<p>Only referrals you verify count: create the new client’s Xstream account, confirm they are a new active client, and extend the referring client’s subscription by one month before approving. Contest periods count referrals approved between the start and end dates; both dates use this device’s local time and are included. Create the period before announcing the contest; prizes are managed separately.</p>
 <p class="summary" id="referral-admin-summary">Loading referral totals…</p>
 <form id="contest-form">
 <h3>Create a contest period</h3>
@@ -93,8 +93,8 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
 </table></div>
 <h3>All-time referral activity</h3>
 <div class="table-wrap"><table>
-<thead><tr><th>Client</th><th>Referral code</th><th>Confirmed referrals</th><th>Free months earned</th></tr></thead>
-<tbody id="referral-alltime-body"><tr><td colspan="4">Loading referral totals…</td></tr></tbody>
+<thead><tr><th>Client</th><th>Referral code</th><th>Confirmed referrals</th><th>Free months applied</th><th>Months pending</th></tr></thead>
+<tbody id="referral-alltime-body"><tr><td colspan="5">Loading referral totals…</td></tr></tbody>
 </table></div>
 </section>
 <form id="unsubscribe-form">
@@ -270,19 +270,26 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
     try {
       const data = await (await referralApi('admin-data')).json();
       referralSummary.textContent = data.totals.activeClients + ' approved clients · ' +
-        data.totals.approvedReferrals + ' confirmed referrals · ' + data.totals.earnedMonths + ' free months earned';
+        data.totals.approvedReferrals + ' confirmed referrals · ' + data.totals.appliedMonths +
+        ' free months applied · ' + data.totals.pendingMonths + ' months pending application';
       const allTimeBody = document.getElementById('referral-alltime-body');
       allTimeBody.replaceChildren();
       if (!data.leaderboard.length) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
-        cell.colSpan = 4;
+        cell.colSpan = 5;
         cell.textContent = 'No approved customer accounts yet.';
         row.append(cell);
         allTimeBody.append(row);
       } else {
         data.leaderboard.forEach(person => {
-          allTimeBody.append(tableRow([person.name + ' (' + person.email + ')', person.referralCode, person.referrals, person.earnedMonths]));
+          allTimeBody.append(tableRow([
+            person.name + ' (' + person.email + ')',
+            person.referralCode,
+            person.referrals,
+            person.appliedMonths,
+            person.pendingMonths
+          ]));
         });
       }
       const priorId = contestSelect.value;

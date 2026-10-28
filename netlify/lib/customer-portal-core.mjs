@@ -130,21 +130,25 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     const tokenKey = 'reviews/' + hash(token);
     await write(tokenKey, { requestKey, expiresAt: now() + REVIEW_TTL_MS });
     const link = mailUrl('/customer-review.html', token, 'review');
+    const referrer = requestRecord.referrerId ? await read('customers/' + requestRecord.referrerId) : null;
     const referralText = requestRecord.referralCode
-      ? 'Referral code used: ' + requestRecord.referralCode + '\nApprove only after confirming this is a new active client.'
+      ? 'Referral code used: ' + requestRecord.referralCode + '\nReferring client: ' + (referrer?.name || 'Unknown') +
+        ' <' + (referrer?.email || 'unknown') + '>\nBefore approving, create the new client’s Xstream account and extend the referring client’s subscription by one month.'
       : 'No referral code was provided.';
     try {
       await sendMail({
         from: env.RESEND_FROM_EMAIL.trim(),
         to: [env.REVIEW_ADMIN_EMAIL.trim()],
-        subject: 'Customer portal access request to review',
+        subject: requestRecord.referralCode ? 'Verified referral ready for Xstream setup' : 'Customer portal access request to review',
         text: 'A customer verified their email and requested portal access.\n\nName: ' + requestRecord.name +
           '\nEmail: ' + requestRecord.email + '\n' + referralText +
-          '\n\nConfirm they are an active BIOHAZARDTVUSA client before approving. If a referral code is shown, approve it only for a new client who has signed up.\n\nReview securely:\n' +
+          '\n\nConfirm the customer is active and the Xstream account is set up before approving. For a referral, confirm they are a new client and that you extended the referring client’s subscription by one month.\n\nReview securely:\n' +
           link + '\n\nThis one-time review link expires in 30 days.',
         html: '<!doctype html><html lang="en"><body style="margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.6 Arial,sans-serif;padding:32px 16px"><main style="max-width:560px;margin:auto;padding:28px;background:#16171d;border:1px solid #35302a;border-radius:14px"><h1 style="color:#e6bd62">Customer portal request</h1><p><strong>Name:</strong> ' +
           escapeHtml(requestRecord.name) + '<br><strong>Email:</strong> ' + escapeHtml(requestRecord.email) + '<br><strong>Referral code:</strong> ' +
-          escapeHtml(requestRecord.referralCode || 'None') + '</p><p>Confirm this person is an active BIOHAZARDTVUSA client before approving. A referral earns one free month only after you confirm the referred person is a new client.</p><p><a href="' +
+          escapeHtml(requestRecord.referralCode || 'None') + (referrer ? '<br><strong>Referring client:</strong> ' +
+            escapeHtml(referrer.name) + ' &lt;' + escapeHtml(referrer.email) + '&gt;' : '') +
+          '</p><p>Confirm the customer is active and the Xstream account is set up before approving. For a referral, confirm they are a new client and extend the referring client’s subscription by one month in Xstream before approving.</p><p><a href="' +
           escapeHtml(link) + '" style="display:inline-block;padding:14px 20px;background:#e6bd62;color:#151515;text-decoration:none;font-weight:bold;border-radius:8px">Review account request</a></p><p>This one-time review link expires in 30 days.</p></main></body></html>'
       });
       await write(requestKey, { ...requestRecord, adminNotifiedAt: now() });
@@ -152,6 +156,32 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       // The one-time link remains usable if the email provider's response is uncertain.
       throw error;
     }
+  }
+
+  async function notifyReferralUse(requestKey, requestRecord) {
+    if (!requestRecord.referralCode || requestRecord.referralUseNotifiedAt) return requestRecord;
+    if (!env.REVIEW_ADMIN_EMAIL || !emailConfigured()) throw new Error('Referral alert email is not configured.');
+    const referrer = requestRecord.referrerId ? await read('customers/' + requestRecord.referrerId) : null;
+    const verificationNote = requestRecord.status === 'verified_pending_admin'
+      ? 'The referred person has verified their email. A separate secure review email will arrive.'
+      : 'This is an immediate alert only; the referred person has not yet verified their email. A separate secure review email will arrive after verification.';
+    await sendMail({
+      from: env.RESEND_FROM_EMAIL.trim(),
+      to: [env.REVIEW_ADMIN_EMAIL.trim()],
+      subject: 'Referral code used — Xstream setup needed',
+      text: 'A new customer submitted a BIOHAZARDTVUSA referral code.\n\nReferred person: ' + requestRecord.name +
+        ' <' + requestRecord.email + '>\nReferral code: ' + requestRecord.referralCode +
+        '\nReferring client: ' + (referrer?.name || 'Unknown') + ' <' + (referrer?.email || 'unknown') +
+        '>\n\n' + verificationNote + ' Create the new client’s Xstream account and extend the referring client’s subscription by one month before approving that review.',
+      html: '<!doctype html><html lang="en"><body style="margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.6 Arial,sans-serif;padding:32px 16px"><main style="max-width:560px;margin:auto;padding:28px;background:#16171d;border:1px solid #35302a;border-radius:14px"><h1 style="color:#e6bd62">Referral code used</h1><p><strong>Referred person:</strong> ' +
+        escapeHtml(requestRecord.name) + ' &lt;' + escapeHtml(requestRecord.email) + '&gt;<br><strong>Referral code:</strong> ' +
+        escapeHtml(requestRecord.referralCode) + '<br><strong>Referring client:</strong> ' +
+        escapeHtml(referrer?.name || 'Unknown') + ' &lt;' + escapeHtml(referrer?.email || 'unknown') +
+        '&gt;</p><p>' + escapeHtml(verificationNote) + ' Create the new client’s Xstream account and extend the referring client’s subscription by one month before approving that review.</p></main></body></html>'
+    });
+    const updated = { ...requestRecord, referralUseNotifiedAt: now() };
+    await write(requestKey, updated);
+    return updated;
   }
 
   async function accountRequest(request) {
@@ -178,7 +208,10 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       if (prior.adminNotifiedAt > now() - 24 * 60 * 60 * 1000) {
         return json(202, { message: ACCOUNT_REQUEST_MESSAGE });
       }
-      try { await notifyAdmin(requestKey, prior); } catch {
+      try {
+        const updated = await notifyReferralUse(requestKey, prior);
+        await notifyAdmin(requestKey, updated);
+      } catch {
         return json(503, { error: 'We could not notify the business about your request. Please contact us on WhatsApp.' });
       }
       return json(202, { message: ACCOUNT_REQUEST_MESSAGE });
@@ -192,7 +225,9 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       referrerId = referrer.id;
     }
     const token = randomBytes(32).toString('hex');
-    const record = {
+    const sameReferral = ['email_verification_pending', 'email_delivery_failed'].includes(prior?.status) &&
+      prior?.referralCode === (referralCode || null) && prior?.referrerId === referrerId;
+    let record = {
       id: prior?.id || randomBytes(16).toString('hex'),
       email,
       name,
@@ -203,12 +238,16 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       updatedAt: new Date(now()).toISOString(),
       confirmationTokenHash: hash(token),
       confirmationExpiresAt: now() + TOKEN_TTL_MS,
-      adminNotifiedAt: null
+      adminNotifiedAt: null,
+      referralUseNotifiedAt: sameReferral ? prior.referralUseNotifiedAt || null : null
     };
     await write(requestKey, record);
     const tokenKey = 'confirmations/' + hash(token);
     await write(tokenKey, { requestKey, expiresAt: record.confirmationExpiresAt });
     const link = mailUrl('/customer-portal.html', token, 'confirm');
+    if (record.referralCode && !record.referralUseNotifiedAt) {
+      try { record = await notifyReferralUse(requestKey, record); } catch {}
+    }
     try {
       await sendMail({
         from: env.RESEND_FROM_EMAIL.trim(),
@@ -224,7 +263,12 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       await write(requestKey, { ...record, status: prior?.status === 'email_verification_pending' ? prior.status : 'email_delivery_failed', confirmationTokenHash: null });
       return json(503, { error: 'We could not send the verification email. Please try again later or contact us on WhatsApp.' });
     }
-    return json(202, { message: ACCOUNT_REQUEST_MESSAGE });
+    const message = record.referralCode
+      ? (record.referralUseNotifiedAt
+          ? 'Check your email to verify this request. The business was alerted that the referral code was used; they will review the Xstream setup before approving.'
+          : 'Check your email to verify this request. The business will receive the referral alert after your address is verified.')
+      : ACCOUNT_REQUEST_MESSAGE;
+    return json(202, { message });
   }
 
   async function verifyAccount(request) {
@@ -236,7 +280,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     const tokenKey = 'confirmations/' + hash(token);
     const confirmation = await read(tokenKey);
     if (!confirmation || confirmation.expiresAt <= now()) return json(410, { error: 'This verification link expired. Submit your request again.' });
-    const requestRecord = await read(confirmation.requestKey);
+    let requestRecord = await read(confirmation.requestKey);
     if (!requestRecord) return json(410, { error: 'This customer request is no longer available.' });
     if (requestRecord.status === 'approved') return json(200, { message: 'Your customer portal account is approved. Request a sign-in link to continue.' });
     if (requestRecord.status === 'rejected') return json(410, { error: 'This customer portal request was not approved. Contact us on WhatsApp if you need help.' });
@@ -249,6 +293,11 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       requestRecord.confirmationTokenHash = null;
       requestRecord.updatedAt = new Date(now()).toISOString();
       await write(confirmation.requestKey, requestRecord);
+    }
+    if (requestRecord.referralCode && !requestRecord.referralUseNotifiedAt) {
+      try { requestRecord = await notifyReferralUse(confirmation.requestKey, requestRecord); } catch {
+        return json(503, { error: 'Your email is verified, but the business could not receive the referral alert. Please contact us on WhatsApp.' });
+      }
     }
     if (!requestRecord.adminNotifiedAt) {
       try { await notifyAdmin(confirmation.requestKey, requestRecord); } catch {
@@ -305,7 +354,8 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     const contests = await listRecords('contests/');
     const pendingReferrals = applications.filter(item => item.referrerId === customer.id &&
       ['email_verification_pending', 'verified_pending_admin'].includes(item.status)).length;
-    const earnedMonths = referrals.filter(item => item.status === 'earned').reduce((sum, item) => sum + (item.rewardMonths || 1), 0);
+    const pendingMonths = referrals.filter(item => item.status === 'earned').reduce((sum, item) => sum + (item.rewardMonths || 1), 0);
+    const appliedMonths = referrals.filter(item => item.status === 'applied').reduce((sum, item) => sum + (item.rewardMonths || 1), 0);
     const link = new WebURL('/customer-portal.html?ref=' + encodeURIComponent(customer.referralCode) + '#request-card', siteBase).href;
     const activeContests = contests.filter(item => Date.parse(item.startAt) <= now() && Date.parse(item.endAt) >= now())
       .map(contest => ({
@@ -315,7 +365,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
         endAt: contest.endAt,
         referrals: allReferrals.filter(item =>
           item.referrerId === customer.id &&
-          item.status === 'earned' &&
+          ['earned', 'applied'].includes(item.status) &&
           Date.parse(item.earnedAt) >= Date.parse(contest.startAt) &&
           Date.parse(item.earnedAt) <= Date.parse(contest.endAt)
         ).length
@@ -326,8 +376,9 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       referralCode: customer.referralCode,
       referralLink: link,
       pendingReferrals,
-      approvedReferrals: referrals.length,
-      earnedMonths,
+      approvedReferrals: referrals.filter(item => ['earned', 'applied'].includes(item.status)).length,
+      pendingMonths,
+      appliedMonths,
       activeContests
     });
   }
@@ -344,22 +395,28 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     const counts = new Map();
     const months = new Map();
     for (const referral of referrals) {
-      if (referral.status !== 'earned') continue;
+      if (!['earned', 'applied'].includes(referral.status)) continue;
       counts.set(referral.referrerId, (counts.get(referral.referrerId) || 0) + 1);
-      months.set(referral.referrerId, (months.get(referral.referrerId) || 0) + (referral.rewardMonths || 1));
+      const totals = months.get(referral.referrerId) || { pending: 0, applied: 0 };
+      const credit = referral.rewardMonths || 1;
+      if (referral.status === 'applied') totals.applied += credit;
+      else totals.pending += credit;
+      months.set(referral.referrerId, totals);
     }
     const leaderboard = activeCustomers.map(customer => ({
       name: customer.name,
       email: customer.email,
       referralCode: customer.referralCode,
       referrals: counts.get(customer.id) || 0,
-      earnedMonths: months.get(customer.id) || 0
+      pendingMonths: months.get(customer.id)?.pending || 0,
+      appliedMonths: months.get(customer.id)?.applied || 0
     })).sort((a, b) => b.referrals - a.referrals || a.name.localeCompare(b.name));
     return json(200, {
       totals: {
         activeClients: activeCustomers.length,
-        approvedReferrals: referrals.filter(item => item.status === 'earned').length,
-        earnedMonths: [...months.values()].reduce((sum, value) => sum + value, 0)
+        approvedReferrals: referrals.filter(item => ['earned', 'applied'].includes(item.status)).length,
+        pendingMonths: [...months.values()].reduce((sum, value) => sum + value.pending, 0),
+        appliedMonths: [...months.values()].reduce((sum, value) => sum + value.applied, 0)
       },
       leaderboard,
       contests: contests.sort((a, b) => b.startAt.localeCompare(a.startAt)).slice(0, 50)
@@ -406,7 +463,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     const counts = new Map();
     for (const referral of referrals) {
       const earnedAt = Date.parse(referral.earnedAt);
-      if (referral.status === 'earned' && earnedAt >= Date.parse(contest.startAt) && earnedAt <= Date.parse(contest.endAt)) {
+      if (['earned', 'applied'].includes(referral.status) && earnedAt >= Date.parse(contest.startAt) && earnedAt <= Date.parse(contest.endAt)) {
         counts.set(referral.referrerId, (counts.get(referral.referrerId) || 0) + 1);
       }
     }
@@ -432,10 +489,13 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     if (!review || review.expiresAt <= now()) return json(410, { error: 'This review link expired or was already used.' });
     const requestRecord = await read(review.requestKey);
     if (!requestRecord || requestRecord.status !== 'verified_pending_admin') return json(410, { error: 'This request is no longer awaiting review.' });
+    const referrer = requestRecord.referrerId ? await read('customers/' + requestRecord.referrerId) : null;
     return json(200, {
       name: requestRecord.name,
       email: requestRecord.email,
       referralCode: requestRecord.referralCode,
+      referrerName: referrer?.name || '',
+      referrerEmail: referrer?.email || '',
       verifiedAt: requestRecord.verifiedAt
     });
   }
@@ -468,9 +528,12 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       } catch {}
       return json(200, { message: 'The customer account request was declined.' });
     }
-    if (input.confirmActiveCustomer !== true) return json(400, { error: 'Confirm that this person is an active customer before approving access.' });
+    if (input.confirmActiveCustomer !== true) return json(400, { error: 'Confirm that the Xstream account is set up and this person is an active customer before approving access.' });
     if (requestRecord.referrerId && input.confirmNewClient !== true) {
       return json(400, { error: 'Confirm that this is a new client before awarding the referral month.' });
+    }
+    if (requestRecord.referrerId && input.confirmRewardApplied !== true) {
+      return json(400, { error: 'Confirm that you extended the referring client’s subscription by one month in Xstream.' });
     }
     let referrer = null;
     if (requestRecord.referrerId) {
@@ -519,9 +582,10 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
         await write(referralKey, {
           referrerId: referrer.id,
           referredCustomerId: customer.id,
-          status: 'earned',
+          status: 'applied',
           rewardMonths: 1,
-          earnedAt: new Date(now()).toISOString()
+          earnedAt: new Date(now()).toISOString(),
+          appliedAt: new Date(now()).toISOString()
         });
       }
     }

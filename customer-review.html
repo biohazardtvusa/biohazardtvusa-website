@@ -28,22 +28,24 @@ a{color:var(--gold)}[hidden]{display:none!important}
 <main class="shell">
   <section class="card">
     <h1>Customer access review</h1>
-    <p class="muted">This secure, one-time page is for the BIOHAZARDTVUSA business owner. Review the request and confirm the customer's status before approving access.</p>
+    <p class="muted">This secure, one-time page is for the BIOHAZARDTVUSA business owner. Complete the Xstream work before approving.</p>
     <div id="review-content" hidden>
       <div class="details">
         <strong>Name:</strong> <span id="request-name"></span><br>
         <strong>Email:</strong> <span id="request-email"></span><br>
-        <strong>Referral code:</strong> <span id="request-code"></span>
+        <strong>Referral code:</strong> <span id="request-code"></span><br>
+        <strong>Referring client:</strong> <span id="referrer-details"></span>
       </div>
-      <label class="check"><input id="active-confirm" type="checkbox"><span>I confirmed this person is an active BIOHAZARDTVUSA customer.</span></label>
-      <label class="check" id="new-client-row" hidden><input id="new-client-confirm" type="checkbox"><span>I confirmed this is a new client who signed up through the displayed referral code. The referring customer earns one free month, to be applied manually.</span></label>
+      <label class="check"><input id="active-confirm" type="checkbox"><span>I created or confirmed this person’s Xstream account and verified they are an active customer.</span></label>
+      <label class="check" id="new-client-row" hidden><input id="new-client-confirm" type="checkbox"><span>I confirmed this is a new client who signed up through the displayed referral code.</span></label>
+      <label class="check" id="reward-applied-row" hidden><input id="reward-applied-confirm" type="checkbox"><span>I extended the referring client’s subscription by one month in Xstream.</span></label>
       <div class="actions">
         <button id="approve-button" type="button" disabled>Approve customer access</button>
         <button id="reject-button" class="secondary" type="button">Decline request</button>
       </div>
     </div>
     <p class="status" id="status" role="status" aria-live="polite">Opening secure review…</p>
-    <p class="muted">Do not approve a request unless you have verified the person is a customer. Referral credits are recorded in the portal; this page does not change billing or apply the free month automatically.</p>
+    <p class="muted">This page does not access Xstream or change subscriptions. Approve a referral only after you manually set up the new client and extend the referring client’s subscription.</p>
     <a href="/" class="link">Return to website</a>
   </section>
 </main>
@@ -54,13 +56,14 @@ a{color:var(--gold)}[hidden]{display:none!important}
   const content = document.getElementById('review-content');
   const activeConfirm = document.getElementById('active-confirm');
   const newClientConfirm = document.getElementById('new-client-confirm');
+  const rewardAppliedConfirm = document.getElementById('reward-applied-confirm');
   const approve = document.getElementById('approve-button');
   const params = new URLSearchParams(location.hash.slice(1));
   const token = params.get('review') || '';
   history.replaceState(null, '', location.pathname);
   const updateButton = () => {
     approve.disabled = !activeConfirm.checked ||
-      (!document.getElementById('new-client-row').hidden && !newClientConfirm.checked);
+      (!document.getElementById('new-client-row').hidden && (!newClientConfirm.checked || !rewardAppliedConfirm.checked));
   };
   const api = async (action, data) => {
     const response = await fetch(endpoint + '?action=' + action, {
@@ -73,7 +76,13 @@ a{color:var(--gold)}[hidden]{display:none!important}
     return body;
   };
   const complete = async decision => {
-    const data = { token, decision, confirmActiveCustomer: activeConfirm.checked, confirmNewClient: newClientConfirm.checked };
+    const data = {
+      token,
+      decision,
+      confirmActiveCustomer: activeConfirm.checked,
+      confirmNewClient: newClientConfirm.checked,
+      confirmRewardApplied: rewardAppliedConfirm.checked
+    };
     if (decision === 'reject' && !window.confirm('Decline this customer access request?')) return;
     approve.disabled = true;
     document.getElementById('reject-button').disabled = true;
@@ -90,6 +99,7 @@ a{color:var(--gold)}[hidden]{display:none!important}
   };
   activeConfirm.addEventListener('change', updateButton);
   newClientConfirm.addEventListener('change', updateButton);
+  rewardAppliedConfirm.addEventListener('change', updateButton);
   approve.addEventListener('click', () => complete('approve'));
   document.getElementById('reject-button').addEventListener('click', () => complete('reject'));
   if (!/^[a-f0-9]{64}$/.test(token)) {
@@ -100,7 +110,11 @@ a{color:var(--gold)}[hidden]{display:none!important}
     document.getElementById('request-name').textContent = data.name;
     document.getElementById('request-email').textContent = data.email;
     document.getElementById('request-code').textContent = data.referralCode || 'None';
+    document.getElementById('referrer-details').textContent = data.referralCode
+      ? (data.referrerName + (data.referrerEmail ? ' · ' + data.referrerEmail : ''))
+      : 'Not applicable';
     document.getElementById('new-client-row').hidden = !data.referralCode;
+    document.getElementById('reward-applied-row').hidden = !data.referralCode;
     content.hidden = false;
     status.textContent = 'Review the details, confirm customer status, then choose an action.';
   }).catch(error => { status.textContent = error.message; });

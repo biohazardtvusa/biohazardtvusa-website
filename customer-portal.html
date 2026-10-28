@@ -73,7 +73,7 @@ h2{font-size:22px;margin:0 0 8px}
       <div class="field"><label for="request-name">Your name</label><input id="request-name" name="name" type="text" minlength="2" maxlength="80" required autocomplete="name"></div>
       <div class="field"><label for="request-email">Email address</label><input id="request-email" name="email" type="email" maxlength="254" required autocomplete="email"></div>
       <div class="field"><label for="request-referral">Referral code (optional)</label><input id="request-referral" name="referralCode" type="text" maxlength="15" placeholder="BHTV-1234567890" autocapitalize="characters" autocomplete="off"></div>
-      <p class="small">If you use a client’s referral code, the business will confirm the new-client signup before awarding one free month to the referring client. The reward is applied manually.</p>
+      <p class="small">Submitting a referral code alerts the business by email. After you verify your address, the business confirms the signup, creates your Xstream account, and extends the referring client’s subscription by one month.</p>
       <div class="form-actions"><button class="btn secondary" type="submit">Verify email and request access</button></div>
     </form>
   </section>
@@ -91,7 +91,8 @@ h2{font-size:22px;margin:0 0 8px}
     <div class="metrics">
       <div class="metric"><span>Successful referrals</span><strong id="approved-referrals">0</strong></div>
       <div class="metric"><span>Awaiting review</span><strong id="pending-referrals">0</strong></div>
-      <div class="metric"><span>Free months earned</span><strong id="earned-months">0</strong></div>
+      <div class="metric"><span>Free months applied</span><strong id="applied-months">0</strong></div>
+      <div class="metric"><span>Months pending application</span><strong id="pending-months">0</strong></div>
     </div>
     </div>
     <section class="anchor-card" id="refer-overview">
@@ -115,11 +116,11 @@ h2{font-size:22px;margin:0 0 8px}
       <ol class="steps">
         <li>Share your personal code or link with a friend.</li>
         <li>Your friend signs up using your referral code.</li>
-        <li>We confirm they are a new, active client.</li>
-        <li>You earn one free month, applied manually through WhatsApp.</li>
+        <li>We confirm they are a new, active client and set up their Xstream account.</li>
+        <li>We extend your subscription by one month and record the referral.</li>
       </ol>
     </section>
-    <div class="notice"><strong>Billing:</strong> Online payments are not connected yet. No payment details are stored in this portal. Contact us through <a href="https://wa.me/message/OW6W63FGRLMHJ1" target="_blank" rel="noopener noreferrer">WhatsApp</a> to manage service or apply an earned referral month. Cancellation takes effect at the end of the paid month.</div>
+    <div class="notice"><strong>Billing:</strong> Online payments are not connected yet. No payment details are stored in this portal. Contact us through <a href="https://wa.me/message/OW6W63FGRLMHJ1" target="_blank" rel="noopener noreferrer">WhatsApp</a> to manage service. Cancellation takes effect at the end of the paid month.</div>
     <div class="form-actions" style="margin-top:18px"><button class="btn secondary" id="sign-out" type="button">Sign out</button></div>
   </section>
   <p class="status" id="status" role="status" aria-live="polite"></p>
@@ -151,7 +152,8 @@ h2{font-size:22px;margin:0 0 8px}
       document.getElementById('account-email').textContent = profile.email;
       document.getElementById('pending-referrals').textContent = String(profile.pendingReferrals);
       document.getElementById('approved-referrals').textContent = String(profile.approvedReferrals);
-      document.getElementById('earned-months').textContent = String(profile.earnedMonths);
+      document.getElementById('applied-months').textContent = String(profile.appliedMonths);
+      document.getElementById('pending-months').textContent = String(profile.pendingMonths);
       document.getElementById('referral-code').textContent = profile.referralCode;
       document.getElementById('referral-link-text').textContent = profile.referralLink;
       document.getElementById('share-referral').href = 'https://wa.me/?text=' + encodeURIComponent('Join BIOHAZARDTVUSA using my referral link: ' + profile.referralLink);
