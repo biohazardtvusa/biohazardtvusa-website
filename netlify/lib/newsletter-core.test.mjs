@@ -144,6 +144,10 @@ test('one-click unsubscribe removes a confirmed address from future exports', as
   const active = await store.get(subscriberKey);
   const unsubscribeToken = active.unsubscribeToken;
 
+  const scannerGet = await handler(request('one-click-unsubscribe&token=' + unsubscribeToken, { method: 'GET' }));
+  assert.equal(scannerGet.status, 405);
+  assert.equal((await store.get(subscriberKey)).status, 'active');
+
   const unsubscribed = await handler(request('one-click-unsubscribe&token=' + unsubscribeToken, {
     method: 'POST',
     headers: { origin: 'https://mail.google.com' }
