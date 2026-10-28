@@ -36,15 +36,17 @@ const input = {
   consent: true
 };
 
-function setup({ failMail = false, startTime = 1_800_000_000_000 } = {}) {
+function setup({ failMail = false, failCampaignBatch = false, mailingAddress = '123 Main Street, Austin, TX 73301', startTime = 1_800_000_000_000 } = {}) {
   const store = new MemoryStore();
   const messages = [];
+  const campaignBatches = [];
   let time = startTime;
   const env = {
     PUBLIC_SITE_URL: 'https://biohazardtvusa.com/',
     RESEND_API_KEY: 'test-key',
     RESEND_FROM_EMAIL: 'BIOHAZARDTVUSA <updates@send.biohazardtvusa.com>',
-    REVIEW_ADMIN_EMAIL: 'owner@example.com'
+    REVIEW_ADMIN_EMAIL: 'owner@example.com',
+    BUSINESS_MAILING_ADDRESS: mailingAddress
   };
   const handler = createNewsletterHandler({
     store,
@@ -53,9 +55,14 @@ function setup({ failMail = false, startTime = 1_800_000_000_000 } = {}) {
     sendMail: async message => {
       if (failMail) throw new Error('mail failure');
       messages.push(message);
+    },
+    sendCampaignBatch: async (batch, idempotencyKey) => {
+      if (failCampaignBatch) throw new Error('campaign batch failure');
+      campaignBatches.push({ batch: structuredClone(batch), idempotencyKey });
+      return { data: batch.map((_, index) => ({ id: 'test-email-' + index })) };
     }
   });
-  return { handler, store, messages, setTime: value => { time = value; } };
+  return { handler, store, messages, campaignBatches, setTime: value => { time = value; } };
 }
 
 function request(action, { method = 'GET', body, headers = {} } = {}) {
@@ -206,4 +213,122 @@ test('marketing consent remains required', async () => {
   const response = await handler(request('signup', { method: 'POST', body: { ...input, consent: false } }));
   assert.equal(response.status, 400);
   assert.equal(messages.length, 0);
+});
+
+test('campaign preview sends only to confirmed recipients with personalized unsubscribe protection', async () => {
+  const { handler, messages, campaignBatches } = setup();
+  const deniedPreview = await handler(request('campaign-preview', {
+    method: 'POST', body: { subject: 'Hello', body: 'Unauthorized preview', audience: 'all' }
+  }));
+  assert.equal(deniedPreview.status, 401);
+  const recipients = [
+    { email: 'fan@example.com', firstName: 'Fan', state: 'TX' },
+    { email: 'casey@example.com', firstName: 'Casey', state: 'CA' }
+  ];
+  for (const recipient of recipients) {
+    await handler(request('signup', { method: 'POST', body: { ...input, ...recipient } }));
+    const token = confirmationToken(messages.at(-1));
+    await handler(request('confirm', { method: 'POST', body: { token } }));
+  }
+  await handler(request('request-access', { method: 'POST' }));
+  const accessToken = messages.at(-1).text.match(/email-list\.html#access=([a-f0-9]{64})/)[1];
+  const auth = { authorization: 'Bearer ' + accessToken };
+
+  const preview = await handler(request('campaign-preview', {
+    method: 'POST', headers: auth,
+    body: { subject: 'Hello {{first_name}}', body: 'A plain-text message for {{first_name}}.\n<script>alert(1)</script>', audience: 'all' }
+  }));
+  assert.equal(preview.status, 200);
+  const previewBody = await preview.json();
+  assert.equal(previewBody.recipientCount, 2);
+  assert.equal(previewBody.sendReady, true);
+  assert.equal(previewBody.audience, 'all');
+
+  const unapproved = await handler(request('campaign-send', {
+    method: 'POST', headers: auth,
+    body: { campaignId: previewBody.campaignId, confirmation: 'SEND', confirmSend: false }
+  }));
+  assert.equal(unapproved.status, 400);
+  assert.equal(campaignBatches.length, 0);
+
+  const sent = await handler(request('campaign-send', {
+    method: 'POST', headers: auth,
+    body: { campaignId: previewBody.campaignId, confirmation: 'SEND', confirmSend: true }
+  }));
+  assert.equal(sent.status, 200);
+  assert.deepEqual(await sent.json(), { status: 'sent', sentCount: 2, skippedCount: 0, failedCount: 0 });
+  assert.equal(campaignBatches.length, 1);
+  const { batch, idempotencyKey } = campaignBatches[0];
+  assert.match(idempotencyKey, /^biohazard-campaign-[a-f0-9]{64}$/);
+  assert.deepEqual(batch.map(message => message.to[0]), ['fan@example.com', 'casey@example.com']);
+  assert.equal(batch[0].subject, 'Hello Fan');
+  assert.match(batch[1].text, /A plain-text message for Casey/);
+  assert.match(batch[0].html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.doesNotMatch(batch[0].html, /<script>/);
+  assert.match(batch[0].text, /123 Main Street, Austin, TX 73301/);
+  assert.match(batch[0].html, /email-unsubscribe\.html#token=/);
+  assert.match(batch[0].headers['List-Unsubscribe'], /action=one-click-unsubscribe/);
+  assert.equal(batch[0].headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
+
+  const duplicate = await handler(request('campaign-send', {
+    method: 'POST', headers: auth,
+    body: { campaignId: previewBody.campaignId, confirmation: 'SEND', confirmSend: true }
+  }));
+  assert.equal(duplicate.status, 409);
+  assert.equal(campaignBatches.length, 1);
+  const campaignStatus = await handler(request('campaign-status&id=' + previewBody.campaignId, {
+    headers: auth
+  }));
+  assert.equal(campaignStatus.status, 200);
+  assert.equal((await campaignStatus.json()).status, 'sent');
+});
+
+test('campaign sending is blocked until a business mailing address is configured', async () => {
+  const { handler, messages, campaignBatches } = setup({ mailingAddress: '' });
+  await handler(request('signup', { method: 'POST', body: input }));
+  const token = confirmationToken(messages[0]);
+  await handler(request('confirm', { method: 'POST', body: { token } }));
+  await handler(request('request-access', { method: 'POST' }));
+  const accessToken = messages.at(-1).text.match(/email-list\.html#access=([a-f0-9]{64})/)[1];
+  const auth = { authorization: 'Bearer ' + accessToken };
+  const preview = await handler(request('campaign-preview', {
+    method: 'POST', headers: auth,
+    body: { subject: 'Update', body: 'A brief update.', audience: 'texas' }
+  }));
+  const previewBody = await preview.json();
+  assert.equal(previewBody.recipientCount, 1);
+  assert.equal(previewBody.sendReady, false);
+  assert.ok(previewBody.configurationIssues.some(issue => issue.includes('BUSINESS_MAILING_ADDRESS')));
+  const blocked = await handler(request('campaign-send', {
+    method: 'POST', headers: auth,
+    body: { campaignId: previewBody.campaignId, confirmation: 'SEND', confirmSend: true }
+  }));
+  assert.equal(blocked.status, 503);
+  assert.equal(campaignBatches.length, 0);
+});
+
+test('campaign batch uncertainty is reported and cannot be bulk-retried', async () => {
+  const { handler, messages } = setup({ failCampaignBatch: true });
+  await handler(request('signup', { method: 'POST', body: input }));
+  const token = confirmationToken(messages[0]);
+  await handler(request('confirm', { method: 'POST', body: { token } }));
+  await handler(request('request-access', { method: 'POST' }));
+  const accessToken = messages.at(-1).text.match(/email-list\.html#access=([a-f0-9]{64})/)[1];
+  const auth = { authorization: 'Bearer ' + accessToken };
+  const preview = await handler(request('campaign-preview', {
+    method: 'POST', headers: auth,
+    body: { subject: 'Update', body: 'A short update.', audience: 'texas' }
+  }));
+  const previewBody = await preview.json();
+  const firstAttempt = await handler(request('campaign-send', {
+    method: 'POST', headers: auth,
+    body: { campaignId: previewBody.campaignId, confirmation: 'SEND', confirmSend: true }
+  }));
+  assert.equal(firstAttempt.status, 502);
+  assert.equal((await firstAttempt.json()).status, 'failed');
+  const duplicateAttempt = await handler(request('campaign-send', {
+    method: 'POST', headers: auth,
+    body: { campaignId: previewBody.campaignId, confirmation: 'SEND', confirmSend: true }
+  }));
+  assert.equal(duplicateAttempt.status, 409);
 });

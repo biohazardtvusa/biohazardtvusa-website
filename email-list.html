@@ -9,6 +9,9 @@
 <style>
 :root{color-scheme:dark;--bg:#0b0c10;--panel:#16171d;--gold:#e6bd62;--text:#f7f1e5;--muted:#b4b0a8;--line:#35302a}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 Arial,sans-serif}main{width:min(760px,100%);margin:auto;padding:36px 20px 64px}a{color:var(--gold);overflow-wrap:anywhere}h1{font-size:clamp(27px,6vw,38px);line-height:1.2}h2{font-size:22px}p{color:var(--muted)}.card{padding:24px;border:1px solid var(--line);border-radius:16px;background:var(--panel);margin:24px 0}.btn{display:inline-block;max-width:100%;padding:14px 20px;background:var(--gold);color:#151515;font:700 16px Arial,sans-serif;border:1px solid var(--gold);border-radius:10px;cursor:pointer;white-space:normal}.btn:disabled{opacity:.6;cursor:wait}.secondary{background:transparent;color:var(--gold);margin-top:16px}input{width:100%;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;margin:8px 0 16px}label{display:block;font-weight:700}[hidden]{display:none!important}.summary{color:var(--gold);font-size:20px;font-weight:700}#status{min-height:1.6em;overflow-wrap:anywhere}.small{font-size:14px}:focus-visible{outline:3px solid var(--gold);outline-offset:4px}
 </style>
+<style>
+textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;margin:8px 0 16px}textarea{min-height:190px;resize:vertical}.campaign-preview-box{padding:18px;border:1px solid var(--line);border-radius:10px;background:var(--bg);overflow-wrap:anywhere;white-space:pre-wrap}.campaign-fields label{margin-top:12px}.approval input{width:auto;margin-right:10px;vertical-align:middle}.campaign-note{font-size:14px}
+</style>
 </head>
 <body>
 <main>
@@ -27,6 +30,40 @@
 <p>Downloads include confirmed, active signups only, with Texas entries first. Earlier signups without verified email ownership are excluded until the person signs up again and confirms. Each CSV row includes a personal unsubscribe page link and a one-click unsubscribe URL. Add the personal link to every marketing email. If your email service supports one-click unsubscribe headers, use the CSV value for <code>List-Unsubscribe</code> and set <code>List-Unsubscribe-Post</code> to <code>List-Unsubscribe=One-Click</code>.</p>
 <button class="btn" id="download" type="button">Download confirmed list (CSV)</button>
 <p class="small">Open the downloaded file in Excel or Google Sheets. Protect it as customer information; don’t publish or share it publicly.</p>
+<section class="card campaign-fields" id="campaign-card">
+<h2>Draft a marketing campaign</h2>
+<p>Previewing does not send email. Campaigns go only to confirmed, active subscribers; Texas subscribers are prioritized. Every message includes a personal unsubscribe link, one-click unsubscribe headers, and your business mailing address.</p>
+<label for="campaign-audience">Audience</label>
+<select id="campaign-audience">
+<option value="texas">Confirmed Texas subscribers</option>
+<option value="all">All confirmed subscribers, Texas first</option>
+</select>
+<label for="campaign-subject">Subject</label>
+<input id="campaign-subject" type="text" maxlength="160" autocomplete="off" required>
+<label for="campaign-body">Message</label>
+<textarea id="campaign-body" maxlength="5000" required></textarea>
+<p class="campaign-note">Use <code>{{first_name}}</code> for optional personalization. If no first name was provided, the email uses “there.”</p>
+<button class="btn" id="campaign-preview-button" type="button">Preview campaign</button>
+<section id="campaign-preview" hidden>
+<h3>Campaign preview</h3>
+<p id="campaign-summary" class="summary"></p>
+<p id="campaign-configuration" role="status" aria-live="polite"></p>
+<div class="campaign-preview-box">
+<p><strong>From</strong><br><span id="campaign-from-preview"></span></p>
+<p><strong>Subject</strong><br><span id="campaign-subject-preview"></span></p>
+<p><strong>Message</strong></p>
+<div id="campaign-body-preview"></div>
+<hr>
+<p class="small">BIOHAZARDTVUSA email updates · Mailing address: <span id="campaign-address-preview"></span></p>
+<p class="small">Personal unsubscribe link and one-click unsubscribe headers are added for each recipient.</p>
+</div>
+<label class="approval"><input id="campaign-approval" type="checkbox">I approve sending this exact preview to the audience shown above.</label>
+<label for="campaign-confirmation">Type SEND to approve</label>
+<input id="campaign-confirmation" type="text" maxlength="4" autocomplete="off">
+<button class="btn" id="campaign-send-button" type="button" disabled>Send campaign now</button>
+</section>
+<p id="campaign-status" role="status" aria-live="polite"></p>
+</section>
 <form id="unsubscribe-form">
 <h2>Remove an address from marketing</h2>
 <p>Use this when someone asks to unsubscribe. They will be excluded from subsequent downloads; you must also suppress them in any lists already imported into an email service.</p>
@@ -37,7 +74,7 @@
 <button class="btn secondary" id="sign-out" type="button">Close secure access</button>
 </section>
 <p id="status" role="status" aria-live="polite"></p>
-<p class="small">This page does not send marketing campaigns. A verified sender, a working unsubscribe mechanism, a valid business mailing address and campaign approval are still required before a campaign is sent.</p>
+<p class="small">Sending requires a verified Resend sender and BUSINESS_MAILING_ADDRESS configured in Netlify. A send is final; the page requires a preview, a typed SEND confirmation, and a final browser approval. If a send result is uncertain, check Resend before creating another campaign.</p>
 </main>
 <script>
 (() => {
@@ -68,6 +105,121 @@
     accessPanel.hidden = true;
     managePanel.hidden = false;
   }
+  const campaignAudience = document.getElementById('campaign-audience');
+  const campaignSubject = document.getElementById('campaign-subject');
+  const campaignBody = document.getElementById('campaign-body');
+  const campaignPreview = document.getElementById('campaign-preview');
+  const campaignPreviewButton = document.getElementById('campaign-preview-button');
+  const campaignSendButton = document.getElementById('campaign-send-button');
+  const campaignApproval = document.getElementById('campaign-approval');
+  const campaignConfirmation = document.getElementById('campaign-confirmation');
+  const campaignStatus = document.getElementById('campaign-status');
+  let activeCampaignId = '';
+  function updateCampaignSendButton() {
+    campaignSendButton.disabled = campaignSendButton.dataset.ready !== 'true' ||
+      !campaignApproval.checked || campaignConfirmation.value.trim() !== 'SEND';
+  }
+  function clearCampaignPreview() {
+    activeCampaignId = '';
+    campaignPreview.hidden = true;
+    campaignSendButton.dataset.ready = 'false';
+    campaignSendButton.disabled = true;
+    campaignStatus.textContent = '';
+    try { sessionStorage.removeItem('biohazardtvusa-campaign-id'); } catch {}
+  }
+  function showCampaignStatus(result) {
+    campaignPreview.hidden = false;
+    campaignSendButton.dataset.ready = 'false';
+    campaignSendButton.disabled = true;
+    campaignStatus.textContent = 'Campaign status: ' + result.status + ' · sent: ' + result.sentCount +
+      ' · skipped: ' + result.skippedCount + ' · uncertain/failed: ' + result.failedCount +
+      '. Do not submit this campaign again.';
+  }
+  async function restoreCampaignStatus() {
+    let savedId = '';
+    try { savedId = sessionStorage.getItem('biohazardtvusa-campaign-id') || ''; } catch {}
+    if (!/^[a-f0-9]{64}$/.test(savedId)) return;
+    activeCampaignId = savedId;
+    try {
+      const result = await (await api('campaign-status&id=' + encodeURIComponent(savedId))).json();
+      showCampaignStatus(result);
+    } catch {
+      try { sessionStorage.removeItem('biohazardtvusa-campaign-id'); } catch {}
+      activeCampaignId = '';
+    }
+  }
+  for (const element of [campaignAudience, campaignSubject, campaignBody]) {
+    element.addEventListener('input', clearCampaignPreview);
+    element.addEventListener('change', clearCampaignPreview);
+  }
+  for (const element of [campaignApproval, campaignConfirmation]) {
+    element.addEventListener('input', updateCampaignSendButton);
+    element.addEventListener('change', updateCampaignSendButton);
+  }
+  campaignPreviewButton.addEventListener('click', async () => {
+    clearCampaignPreview();
+    const subject = campaignSubject.value.trim();
+    const body = campaignBody.value.trim();
+    if (!subject || !body) {
+      campaignStatus.textContent = 'Enter a subject and message before creating a preview.';
+      return;
+    }
+    campaignPreviewButton.disabled = true;
+    campaignStatus.textContent = 'Preparing a private preview…';
+    try {
+      const result = await (await api('campaign-preview', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ subject, body, audience: campaignAudience.value })
+      })).json();
+      activeCampaignId = result.campaignId;
+      campaignPreview.hidden = false;
+      document.getElementById('campaign-summary').textContent =
+        result.recipientCount + ' confirmed recipient' + (result.recipientCount === 1 ? '' : 's') +
+        (result.audience === 'texas' ? ' · Texas only' : ' · Texas recipients sent first');
+      document.getElementById('campaign-configuration').textContent =
+        result.configurationIssues.length ? result.configurationIssues.join(' ') : 'Sender and mailing address are configured.';
+      document.getElementById('campaign-from-preview').textContent = result.from || 'Not configured.';
+      document.getElementById('campaign-subject-preview').textContent = result.subject;
+      document.getElementById('campaign-body-preview').textContent = result.body;
+      document.getElementById('campaign-address-preview').textContent = result.mailingAddress || 'Not configured — sending is blocked.';
+      campaignSendButton.dataset.ready = String(result.sendReady);
+      campaignSendButton.textContent = 'Send to ' + result.recipientCount + ' subscriber' + (result.recipientCount === 1 ? '' : 's');
+      campaignApproval.checked = false;
+      campaignConfirmation.value = '';
+      updateCampaignSendButton();
+      campaignStatus.textContent = result.recipientCount
+        ? 'Preview only. No email has been sent. This preview expires in 30 minutes.'
+        : 'No confirmed subscribers match this audience. No email has been sent.';
+    } catch (error) {
+      campaignStatus.textContent = error.message;
+    } finally {
+      campaignPreviewButton.disabled = false;
+    }
+  });
+  campaignSendButton.addEventListener('click', async () => {
+    if (!activeCampaignId || !campaignApproval.checked || campaignConfirmation.value.trim() !== 'SEND') return;
+    const recipientCount = document.getElementById('campaign-summary').textContent;
+    if (!window.confirm('Send this campaign to ' + recipientCount + '? This sends real email and cannot be recalled.')) return;
+    campaignSendButton.disabled = true;
+    campaignStatus.textContent = 'Submitting the approved campaign to Resend…';
+    try {
+      try { sessionStorage.setItem('biohazardtvusa-campaign-id', activeCampaignId); } catch {}
+      const result = await (await api('campaign-send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ campaignId: activeCampaignId, confirmation: campaignConfirmation.value.trim(), confirmSend: campaignApproval.checked })
+      })).json();
+      showCampaignStatus(result);
+      try { sessionStorage.removeItem('biohazardtvusa-campaign-id'); } catch {}
+    } catch (error) {
+      campaignStatus.textContent = error.message;
+      try {
+        const result = await (await api('campaign-status&id=' + encodeURIComponent(activeCampaignId))).json();
+        showCampaignStatus(result);
+      } catch {}
+    }
+  });
   document.getElementById('request-access').addEventListener('click', async event => {
     const button = event.currentTarget;
     button.disabled = true; status.textContent = 'Requesting your access email…';
@@ -110,7 +262,7 @@
     token = ''; managePanel.hidden = true; accessPanel.hidden = false;
     status.textContent = 'Secure access closed. Close this tab to finish.';
   });
-  if (token) refresh().catch(error => { status.textContent = error.message; });
+  if (token) refresh().then(restoreCampaignStatus).catch(error => { status.textContent = error.message; });
 })();
 </script>
 </body>

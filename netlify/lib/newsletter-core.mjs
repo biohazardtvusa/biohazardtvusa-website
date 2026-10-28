@@ -5,6 +5,10 @@ const CONSENT = 'Yes, email me BIOHAZARDTVUSA live TV updates, offers and referr
 const VERSION = '2026-10-28';
 const CONFIRMATION_TTL_MS = 72 * 60 * 60 * 1000;
 const CONFIRMATION_RESEND_MS = 10 * 60 * 1000;
+const CAMPAIGN_DRAFT_TTL_MS = 30 * 60 * 1000;
+const CAMPAIGN_BATCH_SIZE = 100;
+const CAMPAIGN_SUBJECT_MAX = 160;
+const CAMPAIGN_BODY_MAX = 5000;
 const STATES = new Set(('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY OTHER OUTSIDE_US UNSPECIFIED').split(' '));
 const hash = value => createHash('sha256').update(value).digest('hex');
 const keyFor = email => 'subscribers/' + hash(email);
@@ -21,7 +25,7 @@ const csvCell = value => {
   return '"' + text.replaceAll('"', '""') + '"';
 };
 
-export function createNewsletterHandler({ store, env = {}, sendMail, now = () => Date.now() }) {
+export function createNewsletterHandler({ store, env = {}, sendMail, sendCampaignBatch, now = () => Date.now() }) {
   async function read(key) { return store.get(key, { type: 'json' }); }
   async function write(key, value) { await store.setJSON(key, value); }
   const siteBase = env.PUBLIC_SITE_URL || 'https://biohazardtvusa.com/';
@@ -74,13 +78,67 @@ export function createNewsletterHandler({ store, env = {}, sendMail, now = () =>
       : a.state === 'TX' ? -1 : b.state === 'TX' ? 1 : a.state.localeCompare(b.state));
   }
 
-  async function parse(request) {
-    if (Number(request.headers.get('content-length')) > 4096) throw new Error('body');
+  async function parse(request, maxLength = 4096) {
+    if (Number(request.headers.get('content-length')) > maxLength) throw new Error('body');
     const text = await request.text();
-    if (text.length > 4096) throw new Error('body');
+    if (text.length > maxLength) throw new Error('body');
     if ((request.headers.get('content-type') || '').includes('application/json')) return JSON.parse(text);
     if ((request.headers.get('content-type') || '').includes('application/x-www-form-urlencoded')) return Object.fromEntries(new URLSearchParams(text));
     throw new Error('body');
+  }
+
+  function campaignConfiguration() {
+    const from = typeof env.RESEND_FROM_EMAIL === 'string' ? env.RESEND_FROM_EMAIL.trim() : '';
+    const fromAddress = (from.match(/<([^<>]+)>/)?.[1] || from).trim().toLowerCase();
+    const mailingAddress = typeof env.BUSINESS_MAILING_ADDRESS === 'string' ? env.BUSINESS_MAILING_ADDRESS.trim() : '';
+    const issues = [];
+    if (!env.RESEND_API_KEY || !from || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(fromAddress) || fromAddress === 'onboarding@resend.dev') {
+      issues.push('Configure a verified Resend sender in Netlify before sending.');
+    }
+    if (!mailingAddress || mailingAddress.length < 10 || mailingAddress.length > 400) {
+      issues.push('Set BUSINESS_MAILING_ADDRESS in Netlify environment variables, then redeploy.');
+    }
+    if (typeof sendCampaignBatch !== 'function') {
+      issues.push('Campaign delivery is not available in this deployment.');
+    }
+    return { ready: issues.length === 0, issues, from, mailingAddress };
+  }
+
+  function campaignMessage(record, draft, config) {
+    const firstName = record.firstName?.trim() || 'there';
+    const subject = draft.subject.replaceAll('{{first_name}}', firstName);
+    const body = draft.body.replaceAll('{{first_name}}', firstName);
+    const unsubscribeUrl = new WebURL('/email-unsubscribe.html', siteBase);
+    unsubscribeUrl.hash = 'token=' + record.unsubscribeToken;
+    const oneClickUrl = new WebURL('/.netlify/functions/newsletter', siteBase);
+    oneClickUrl.searchParams.set('action', 'one-click-unsubscribe');
+    oneClickUrl.searchParams.set('token', record.unsubscribeToken);
+    const addressHtml = escapeHtml(config.mailingAddress).replace(/\r?\n/g, '<br>');
+    const bodyHtml = escapeHtml(body).replace(/\r?\n/g, '<br>');
+    const nameHtml = escapeHtml(firstName);
+    return {
+      from: config.from,
+      to: [record.email],
+      subject,
+      text: 'Hi ' + firstName + ',\n\n' + body + '\n\nYou received this because you signed up for BIOHAZARDTVUSA email updates.\nBusiness mailing address: ' +
+        config.mailingAddress + '\nUnsubscribe from marketing: ' + unsubscribeUrl.href,
+      html: '<!doctype html><html lang="en"><body style="margin:0;background:#0b0c10;color:#f7f1e5;font:16px/1.6 Arial,sans-serif;padding:24px 12px"><main style="max-width:600px;margin:auto;padding:26px;background:#16171d;border:1px solid #35302a;border-radius:14px"><h1 style="color:#e6bd62">BIOHAZARDTVUSA</h1><p>Hi ' +
+        nameHtml + ',</p><p>' + bodyHtml + '</p><hr style="border:0;border-top:1px solid #35302a;margin:28px 0"><p style="font-size:13px;color:#b4b0a8">You received this because you signed up for BIOHAZARDTVUSA email updates.</p><p style="font-size:13px;color:#b4b0a8">' +
+        addressHtml + '</p><p style="font-size:13px"><a href="' + escapeHtml(unsubscribeUrl.href) + '" style="color:#e6bd62">Unsubscribe from marketing</a></p></main></body></html>',
+      headers: {
+        'List-Unsubscribe': '<' + oneClickUrl.href + '>',
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
+      }
+    };
+  }
+
+  async function cleanupExpiredCampaigns() {
+    for await (const page of store.list({ prefix: 'campaign-drafts/', paginate: true })) {
+      for (const blob of page.blobs) {
+        const draft = await read(blob.key);
+        if (draft?.expiresAt && draft.expiresAt <= now()) await store.delete(blob.key);
+      }
+    }
   }
 
   return async request => {
@@ -195,6 +253,194 @@ export function createNewsletterHandler({ store, env = {}, sendMail, now = () =>
           await store.delete(tokenKey);
         }
         return json(200, { message: 'You have been unsubscribed from BIOHAZARDTVUSA marketing emails.' });
+      }
+
+      if (['campaign-preview', 'campaign-send', 'campaign-status'].includes(action)) {
+        if (!await authorized(request)) return json(401, { error: 'This link is missing or expired. Request a new secure access email.' });
+
+        if (action === 'campaign-status') {
+          if (request.method !== 'GET') return json(405, { error: 'Method not allowed.' });
+          const campaignId = url.searchParams.get('id') || '';
+          if (!validToken(campaignId)) return json(400, { error: 'This campaign reference is invalid.' });
+          const key = 'campaign-drafts/' + hash(campaignId);
+          const draft = await read(key);
+          if (!draft) return json(404, { error: 'This campaign preview is no longer available.' });
+          if (draft.expiresAt <= now()) {
+            await store.delete(key);
+            return json(410, { error: 'This campaign record expired. Create a new preview if you have not sent it.' });
+          }
+          return json(200, {
+            status: draft.status,
+            recipientCount: draft.recipientCount || 0,
+            sentCount: draft.sentCount || 0,
+            skippedCount: draft.skippedCount || 0,
+            failedCount: draft.failedCount || 0,
+            expiresAt: draft.expiresAt
+          });
+        }
+
+        if (request.method !== 'POST') return json(405, { error: 'Method not allowed.' });
+
+        if (action === 'campaign-preview') {
+          if (await limited(request, 'campaign-preview', 10)) return json(429, { error: 'Please wait before creating another campaign preview.' });
+          let input;
+          try { input = await parse(request, 30000); } catch { return json(400, { error: 'Please review the campaign fields and try again.' }); }
+          if (!input || typeof input !== 'object' || Array.isArray(input)) return json(400, { error: 'Please review the campaign fields and try again.' });
+          await cleanupExpiredCampaigns();
+          const subject = typeof input.subject === 'string' ? input.subject.trim() : '';
+          const body = typeof input.body === 'string' ? input.body.replace(/\r\n?/g, '\n').trim() : '';
+          const audience = input.audience || 'texas';
+          if (!subject || subject.length > CAMPAIGN_SUBJECT_MAX || /[\u0000-\u001f\u007f]/.test(subject)) {
+            return json(400, { error: 'Enter a subject of 1 to 160 characters on one line.' });
+          }
+          if (!body || body.length > CAMPAIGN_BODY_MAX || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(body)) {
+            return json(400, { error: 'Enter a message of 1 to 5,000 characters.' });
+          }
+          if (!['texas', 'all'].includes(audience)) return json(400, { error: 'Choose Texas subscribers or all confirmed subscribers.' });
+
+          const audienceRows = (await subscribers()).filter(row => audience === 'all' || row.state === 'TX');
+          const campaignId = randomBytes(32).toString('hex');
+          const createdAt = new Date(now()).toISOString();
+          const expiresAt = now() + CAMPAIGN_DRAFT_TTL_MS;
+          const config = campaignConfiguration();
+          await write('campaign-drafts/' + hash(campaignId), {
+            status: 'ready',
+            subject,
+            body,
+            audience,
+            recipientKeys: audienceRows.map(row => keyFor(row.email)),
+            recipientCount: audienceRows.length,
+            configReady: config.ready,
+            senderFrom: config.from,
+            mailingAddress: config.mailingAddress,
+            createdAt,
+            expiresAt
+          });
+          return json(200, {
+            campaignId,
+            status: 'ready',
+            subject,
+            body,
+            audience,
+            recipientCount: audienceRows.length,
+            from: config.from,
+            mailingAddress: config.mailingAddress,
+            configurationIssues: config.issues,
+            sendReady: config.ready && audienceRows.length > 0,
+            expiresAt
+          });
+        }
+
+        if (await limited(request, 'campaign-send', 3)) return json(429, { error: 'Please wait before approving another campaign send.' });
+        let input;
+        try { input = await parse(request, 4096); } catch { return json(400, { error: 'This campaign approval is invalid. Create a fresh preview.' }); }
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return json(400, { error: 'This campaign approval is invalid. Create a fresh preview.' });
+        const campaignId = input.campaignId;
+        if (!validToken(campaignId) || input.confirmation !== 'SEND' || input.confirmSend !== true) {
+          return json(400, { error: 'Review the campaign and type SEND with the approval box checked.' });
+        }
+        const config = campaignConfiguration();
+        if (!config.ready) return json(503, { error: 'Campaign sending is blocked until the required sender and mailing address are configured.', configurationIssues: config.issues });
+
+        const key = 'campaign-drafts/' + hash(campaignId);
+        const draft = await read(key);
+        if (!draft) return json(404, { error: 'This campaign preview is no longer available. Create a new preview.' });
+        if (draft.status !== 'ready') {
+          return json(409, {
+            error: draft.status === 'sending'
+              ? 'This campaign is already being processed. Do not submit it again.'
+              : 'This campaign has already been attempted. Create a new preview only after checking Resend delivery activity.',
+            status: draft.status,
+            sentCount: draft.sentCount || 0,
+            skippedCount: draft.skippedCount || 0,
+            failedCount: draft.failedCount || 0
+          });
+        }
+        if (draft.expiresAt <= now()) {
+          await store.delete(key);
+          return json(410, { error: 'This campaign preview expired. Create a new preview.' });
+        }
+        if (!draft.configReady || draft.senderFrom !== config.from || draft.mailingAddress !== config.mailingAddress) {
+          return json(409, { error: 'Sender or mailing-address settings changed after preview. Create a fresh preview before approval.' });
+        }
+
+        const currentRecipients = [];
+        let skippedCount = 0;
+        for (const subscriberKey of draft.recipientKeys || []) {
+          const record = await read(subscriberKey);
+          const matchesAudience = draft.audience === 'all' || record?.state === 'TX';
+          if (record?.status === 'active' && record.emailOwnershipVerified === true &&
+              validToken(record.unsubscribeToken) && matchesAudience) currentRecipients.push(record);
+          else skippedCount++;
+        }
+        if (!currentRecipients.length) {
+          await write(key, { status: 'empty', recipientCount: draft.recipientCount, sentCount: 0, skippedCount, failedCount: 0, expiresAt: now() + CAMPAIGN_DRAFT_TTL_MS });
+          return json(409, { error: 'No confirmed subscribers remain in this audience. No email was sent.', status: 'empty', sentCount: 0, skippedCount, failedCount: 0 });
+        }
+
+        draft.status = 'sending';
+        draft.sentCount = 0;
+        draft.skippedCount = skippedCount;
+        draft.failedCount = 0;
+        draft.startedAt = new Date(now()).toISOString();
+        draft.expiresAt = now() + 7 * 86400000;
+        await write(key, draft);
+
+        for (let start = 0; start < currentRecipients.length; start += CAMPAIGN_BATCH_SIZE) {
+          const batch = currentRecipients.slice(start, start + CAMPAIGN_BATCH_SIZE);
+          const batchIndex = Math.floor(start / CAMPAIGN_BATCH_SIZE);
+          const emails = batch.map(record => campaignMessage(record, draft, config));
+          const idempotencyKey = 'biohazard-campaign-' + hash(campaignId + ':' + batchIndex);
+          try {
+            const result = await sendCampaignBatch(emails, idempotencyKey);
+            if (!Array.isArray(result?.data) || result.data.length !== emails.length) {
+              throw new Error('Resend did not confirm every email in the batch.');
+            }
+            draft.sentCount += emails.length;
+            draft.completedBatches = batchIndex + 1;
+            await write(key, draft);
+          } catch {
+            const failedDraft = {
+              status: 'failed',
+              subject: draft.subject,
+              audience: draft.audience,
+              recipientCount: draft.recipientCount,
+              sentCount: draft.sentCount,
+              skippedCount: draft.skippedCount,
+              failedCount: emails.length,
+              failedBatch: batchIndex + 1,
+              completedAt: new Date(now()).toISOString(),
+              expiresAt: now() + 7 * 86400000
+            };
+            await write(key, failedDraft);
+            return json(502, {
+              status: 'failed',
+              sentCount: failedDraft.sentCount,
+              skippedCount: failedDraft.skippedCount,
+              failedCount: failedDraft.failedCount,
+              error: 'Resend did not confirm this batch. Do not retry this campaign; check Resend delivery activity first.'
+            });
+          }
+        }
+
+        const completed = {
+          status: 'sent',
+          subject: draft.subject,
+          audience: draft.audience,
+          recipientCount: draft.recipientCount,
+          sentCount: draft.sentCount,
+          skippedCount: draft.skippedCount,
+          failedCount: 0,
+          completedAt: new Date(now()).toISOString(),
+          expiresAt: now() + 7 * 86400000
+        };
+        await write(key, completed);
+        return json(200, {
+          status: completed.status,
+          sentCount: completed.sentCount,
+          skippedCount: completed.skippedCount,
+          failedCount: completed.failedCount
+        });
       }
 
       if (['summary', 'export', 'unsubscribe'].includes(action)) {
