@@ -52,12 +52,12 @@
     whatsappContactLink.textContent = 'WhatsApp ↗';
     contactOptions.append(whatsappContactLink);
 
-    const callLink = document.createElement('a');
-    callLink.className = 'btn alt';
-    callLink.href = 'tel:+17262156959';
-    callLink.textContent = 'Call';
-    callLink.setAttribute('aria-label', 'Call +1 (726) 215-6959');
-    contactOptions.append(callLink);
+    const textLink = document.createElement('a');
+    textLink.className = 'btn alt';
+    textLink.href = 'sms:+17262156959';
+    textLink.textContent = 'Text us';
+    textLink.setAttribute('aria-label', 'Text +1 (726) 215-6959');
+    contactOptions.append(textLink);
 
     const emailLink = document.createElement('a');
     emailLink.className = 'btn alt';
@@ -71,10 +71,10 @@
   if (contactForm) {
     const emailHeading = contactForm.querySelector('h2');
     const emailIntro = contactForm.querySelector('.intro');
-    const phoneNote = contactForm.querySelector('a[href^="tel:"]')?.parentNode;
+    const phoneNote = contactForm.querySelector('a[href^="sms:"]')?.parentNode;
     if (emailHeading) emailHeading.textContent = 'Email us';
     if (emailIntro) emailIntro.textContent = 'Use the form below and we’ll reply by email.';
-    if (phoneNote) phoneNote.firstChild.textContent = 'Or call us: ';
+    if (phoneNote) phoneNote.firstChild.textContent = 'Or text us: ';
   }
 
   const headerLinks = document.querySelector('.nav .links');
