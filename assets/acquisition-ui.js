@@ -41,6 +41,14 @@
   pricing.after(deviceCheck);
 
   const reviews = document.getElementById('reviews');
+  const headerLinks = document.querySelector('.nav .links');
+  if (headerLinks && !headerLinks.querySelector('a[href="#referral-heading"]')) {
+    const referralLink = document.createElement('a');
+    referralLink.href = '#referral-heading';
+    referralLink.textContent = 'Refer a Friend';
+    headerLinks.append(referralLink);
+  }
+
   if (reviews) {
     const reviewEyebrow = reviews.querySelector('.eyebrow');
     const reviewHeading = reviews.querySelector('h2');
