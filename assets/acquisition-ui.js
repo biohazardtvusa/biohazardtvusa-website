@@ -41,6 +41,42 @@
   pricing.after(deviceCheck);
 
   const reviews = document.getElementById('reviews');
+  const contactInfo = document.querySelector('#contact .contact > div');
+  const contactForm = document.getElementById('contact-form');
+  const whatsappContactLink = contactInfo?.querySelector('a[href^="https://wa.me/"]');
+  if (contactInfo && contactForm && whatsappContactLink && !contactInfo.querySelector('.contact-options')) {
+    const contactOptions = document.createElement('div');
+    contactOptions.className = 'actions contact-options';
+    contactOptions.setAttribute('role', 'group');
+    contactOptions.setAttribute('aria-label', 'Choose how to contact us');
+    whatsappContactLink.textContent = 'WhatsApp ↗';
+    contactOptions.append(whatsappContactLink);
+
+    const callLink = document.createElement('a');
+    callLink.className = 'btn alt';
+    callLink.href = 'tel:+17262156959';
+    callLink.textContent = 'Call';
+    callLink.setAttribute('aria-label', 'Call +1 (726) 215-6959');
+    contactOptions.append(callLink);
+
+    const emailLink = document.createElement('a');
+    emailLink.className = 'btn alt';
+    emailLink.href = '#contact-form';
+    emailLink.textContent = 'Email us';
+    contactOptions.append(emailLink);
+
+    contactInfo.append(contactOptions);
+  }
+
+  if (contactForm) {
+    const emailHeading = contactForm.querySelector('h2');
+    const emailIntro = contactForm.querySelector('.intro');
+    const phoneNote = contactForm.querySelector('a[href^="tel:"]')?.parentNode;
+    if (emailHeading) emailHeading.textContent = 'Email us';
+    if (emailIntro) emailIntro.textContent = 'Use the form below and we’ll reply by email.';
+    if (phoneNote) phoneNote.firstChild.textContent = 'Or call us: ';
+  }
+
   const headerLinks = document.querySelector('.nav .links');
   if (headerLinks && !headerLinks.querySelector('a[href="#referral-heading"]')) {
     const referralLink = document.createElement('a');
