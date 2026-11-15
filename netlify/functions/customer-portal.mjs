@@ -3,11 +3,13 @@ import { createCustomerPortalHandler } from '../lib/customer-portal-core.mjs';
 
 const store = getStore({ name: 'biohazard-customer-portal', consistency: 'strong' });
 const adminStore = getStore({ name: 'biohazard-email-signups', consistency: 'strong' });
+const analyticsStore = getStore({ name: 'biohazard-website-analytics', consistency: 'strong' });
 
 export default async request => {
   const handler = createCustomerPortalHandler({
     store,
     adminStore,
+    analyticsStore,
     env: process.env,
     sendMail: async message => {
       const response = await fetch('https://api.resend.com/emails', {

@@ -437,3 +437,53 @@ test('contest tracker counts only owner-approved referrals inside the contest pe
   });
   assert.equal(adminData.body.acquisitionFunnel.find(item => item.source === 'client_referral').requests, 2);
 });
+
+test('admin traffic summary counts recent views by UTC day and source', async () => {
+  const now = Date.parse('2026-11-13T12:00:00.000Z');
+  const store = new MemoryStore();
+  const adminStore = new MemoryStore();
+  const analyticsStore = new MemoryStore();
+  const adminToken = 'c'.repeat(64);
+  await adminStore.setJSON('access/' + createHash('sha256').update(adminToken).digest('hex'), {
+    expiresAt: now + 60_000
+  });
+  await analyticsStore.setJSON('pageviews/2026-11-12/one', {
+    page: '/',
+    source: 'facebook',
+    campaign: 'november',
+    createdAt: '2026-11-12T10:00:00.000Z'
+  });
+  await analyticsStore.setJSON('pageviews/2026-11-13/two', {
+    page: '/',
+    source: 'facebook',
+    campaign: 'november',
+    createdAt: '2026-11-13T09:00:00.000Z'
+  });
+  await analyticsStore.setJSON('pageviews/2026-10-01/old', {
+    page: '/',
+    source: 'google',
+    campaign: '',
+    createdAt: '2026-10-01T09:00:00.000Z'
+  });
+  const handler = createCustomerPortalHandler({
+    store,
+    adminStore,
+    analyticsStore,
+    now: () => now
+  });
+
+  const result = await call(handler, 'admin-data', {
+    method: 'GET',
+    headers: { authorization: 'Bearer ' + adminToken }
+  });
+
+  assert.equal(result.response.status, 200);
+  assert.deepEqual(result.body.websiteTraffic, {
+    pageviews: 2,
+    byDay: [
+      { day: '2026-11-12', pageviews: 1 },
+      { day: '2026-11-13', pageviews: 1 }
+    ],
+    bySource: [{ source: 'facebook', campaign: 'november', pageviews: 2 }]
+  });
+});

@@ -72,6 +72,19 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
 <h2>Client referrals and contest tracker</h2>
 <p>Only referrals you verify count: create the new client’s Xstream account, confirm they are a new active client, and extend the referring client’s subscription by one month before approving. Contest periods count referrals approved between the start and end dates; both dates use this device’s local time and are included. Create the period before announcing the contest; prizes are managed separately.</p>
 <p class="summary" id="referral-admin-summary">Loading referral totals…</p>
+<h3>Website traffic · last 30 days</h3>
+<p>These are aggregate homepage page views, not unique people. Refreshing the page may count again. Records are kept for 90 days; no visitor ID or IP address is stored.</p>
+<p class="summary" id="website-traffic-summary">Loading page views…</p>
+<h4>Daily page views (UTC)</h4>
+<div class="table-wrap"><table>
+<thead><tr><th>Day</th><th>Page views</th></tr></thead>
+<tbody id="website-traffic-daily"><tr><td colspan="2">Loading daily totals…</td></tr></tbody>
+</table></div>
+<h4>Page views by source</h4>
+<div class="table-wrap"><table>
+<thead><tr><th>Source / campaign</th><th>Page views</th></tr></thead>
+<tbody id="website-traffic-sources"><tr><td colspan="2">Loading source totals…</td></tr></tbody>
+</table></div>
 <h3>Website source to activated clients</h3>
 <p>These totals follow portal account requests by first identified source and campaign, then count accounts you approved after confirming the Xstream setup. WhatsApp conversations that never become portal requests are not included. Older requests without source details appear as unknown.</p>
 <div class="table-wrap"><table>
@@ -278,6 +291,33 @@ textarea,select{width:100%;padding:14px;border:1px solid var(--line);border-radi
       referralSummary.textContent = data.totals.activeClients + ' approved clients · ' +
         data.totals.approvedReferrals + ' confirmed referrals · ' + data.totals.appliedMonths +
         ' free months applied · ' + data.totals.pendingMonths + ' months pending application';
+      const websiteTraffic = data.websiteTraffic || { pageviews: 0, byDay: [], bySource: [] };
+      document.getElementById('website-traffic-summary').textContent =
+        websiteTraffic.pageviews + ' homepage page views in the last 30 days.';
+      const dailyBody = document.getElementById('website-traffic-daily');
+      dailyBody.replaceChildren();
+      if (!websiteTraffic.byDay.length) {
+        dailyBody.append(tableRow(['No page views recorded yet.', '0']));
+      } else {
+        for (const item of websiteTraffic.byDay) dailyBody.append(tableRow([item.day, item.pageviews]));
+      }
+      const trafficSourceBody = document.getElementById('website-traffic-sources');
+      trafficSourceBody.replaceChildren();
+      if (!websiteTraffic.bySource.length) {
+        trafficSourceBody.append(tableRow(['No source data yet.', '0']));
+      } else {
+        const trafficLabels = {
+          google: 'Google', bing: 'Bing', facebook: 'Facebook', instagram: 'Instagram',
+          tiktok: 'TikTok', youtube: 'YouTube', whatsapp: 'WhatsApp', email: 'Email',
+          client_referral: 'Client referral', direct: 'Direct / untagged',
+          other_website: 'Other website', other: 'Other campaign', unknown: 'Unknown'
+        };
+        for (const item of websiteTraffic.bySource) {
+          const source = trafficLabels[item.source] || 'Unknown';
+          const label = item.campaign ? source + ' · ' + item.campaign : source;
+          trafficSourceBody.append(tableRow([label, item.pageviews]));
+        }
+      }
       const acquisitionBody = document.getElementById('acquisition-funnel-body');
       acquisitionBody.replaceChildren();
       const acquisitionRows = data.acquisitionFunnel || [];

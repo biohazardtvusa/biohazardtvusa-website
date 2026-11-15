@@ -55,7 +55,7 @@ const ACQUISITION_SOURCE_VALUES = new Set([
   'email', 'client_referral', 'direct', 'other_website', 'other', 'unknown'
 ]);
 
-export function createCustomerPortalHandler({ store, adminStore, env = {}, sendMail, now = () => Date.now() }) {
+export function createCustomerPortalHandler({ store, adminStore, analyticsStore = store, env = {}, sendMail, now = () => Date.now() }) {
   const siteBase = env.PUBLIC_SITE_URL || 'https://biohazardtvusa.com/';
   const read = async key => store.get(key, { type: 'json' });
   const write = async (key, value) => store.setJSON(key, value);
@@ -73,6 +73,34 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
       }
     }
     return records;
+  }
+
+  async function websiteTrafficSummary() {
+    const windowStart = now() - 30 * 24 * 60 * 60 * 1000;
+    const byDay = new Map();
+    const bySource = new Map();
+    let pageviews = 0;
+    for await (const page of analyticsStore.list({ prefix: 'pageviews/', paginate: true })) {
+      for (const blob of page.blobs) {
+        const event = await analyticsStore.get(blob.key, { type: 'json' });
+        const createdAt = Date.parse(event?.createdAt || '');
+        if (!event || event.page !== '/' || !Number.isFinite(createdAt) || createdAt < windowStart) continue;
+        pageviews++;
+        const day = new Date(createdAt).toISOString().slice(0, 10);
+        byDay.set(day, (byDay.get(day) || 0) + 1);
+        const source = ACQUISITION_SOURCE_VALUES.has(event.source) ? event.source : 'unknown';
+        const campaign = typeof event.campaign === 'string' ? event.campaign.slice(0, 48) : '';
+        const key = source + '\u0000' + campaign;
+        const item = bySource.get(key) || { source, campaign, pageviews: 0 };
+        item.pageviews++;
+        bySource.set(key, item);
+      }
+    }
+    return {
+      pageviews,
+      byDay: [...byDay.entries()].map(([day, count]) => ({ day, pageviews: count })).sort((a, b) => a.day.localeCompare(b.day)),
+      bySource: [...bySource.values()].sort((a, b) => b.pageviews - a.pageviews || a.source.localeCompare(b.source))
+    };
   }
 
   async function limited(scope, identity, max) {
@@ -601,6 +629,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
     }
     const acquisitionFunnel = [...acquisitionGroups.values()]
       .sort((a, b) => b.activated - a.activated || b.requests - a.requests || a.source.localeCompare(b.source));
+    const websiteTraffic = await websiteTrafficSummary();
     return json(200, {
       totals: {
         activeClients: activeCustomers.length,
@@ -608,6 +637,7 @@ export function createCustomerPortalHandler({ store, adminStore, env = {}, sendM
         pendingMonths: [...months.values()].reduce((sum, value) => sum + value.pending, 0),
         appliedMonths: [...months.values()].reduce((sum, value) => sum + value.applied, 0)
       },
+      websiteTraffic,
       acquisitionFunnel,
       leaderboard,
       contests: contests.sort((a, b) => b.startAt.localeCompare(a.startAt)).slice(0, 50)
